@@ -153,8 +153,8 @@ and a live metrics dashboard.
 
 ## Screenshots
 
-> Drop four PNGs into [`docs/screenshots/`](docs/screenshots/) (see the
-> [capture guide](docs/screenshots/CAPTURE_GUIDE.md)) and this grid renders.
+> The images below are **placeholders** — replace them with real captures from
+> the running app (see the [capture guide](docs/screenshots/CAPTURE_GUIDE.md)).
 
 <table>
   <tr>
