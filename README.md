@@ -1,5 +1,13 @@
 # 🕵️ AI Financial Investigation Assistant
 
+[![Python](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white&style=flat-square)](https://www.python.org)
+[![A2A](https://img.shields.io/badge/A2A-v1.0-4c8bf5?style=flat-square)](https://a2a-protocol.org)
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white&style=flat-square)
+![Streamlit](https://img.shields.io/badge/Streamlit-FF4B4B?logo=streamlit&logoColor=white&style=flat-square)
+![Tests](https://img.shields.io/badge/tests-54%20passing-2ea44f?style=flat-square)
+![Eval](https://img.shields.io/badge/eval-100%25-2ea44f?style=flat-square)
+[![License](https://img.shields.io/badge/license-MIT-2ea44f?style=flat-square)](LICENSE)
+
 A multi-agent **financial-crime investigation** system built on the
 **[Agent2Agent (A2A) protocol, v1.0](https://a2a-protocol.org/)**. An analyst
 enters a customer; an **Orchestrator** delegates over real A2A to specialist
