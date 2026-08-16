@@ -1,0 +1,32 @@
+# Runtime dependencies (portfolio scale). Every package here is actually imported.
+
+# --- web / API ---
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+pydantic>=2.9.0
+pydantic-settings>=2.6.0
+
+# --- A2A transport (JSON-RPC over HTTP + SSE) ---
+httpx>=0.27.2
+httpx-sse>=0.4.0
+
+# --- persistence ---
+sqlalchemy[asyncio]>=2.0.36
+aiosqlite>=0.20.0          # SQLite driver (default / local)
+asyncpg>=0.30.0            # PostgreSQL driver (docker-compose)
+
+# --- security ---
+pyjwt[crypto]>=2.10.0
+
+# --- UI ---
+streamlit>=1.40.0
+
+# --- dev / test ---
+pytest>=8.3.0
+pytest-asyncio>=0.24.0
+ruff>=0.7.0
+
+# --- optional: LLM narrative (the system runs fully deterministic without it) ---
+# Uncomment to enable LLM_ENABLED=true. Imported lazily; absence degrades to the
+# deterministic template, so it is not required.
+# anthropic>=0.40.0
