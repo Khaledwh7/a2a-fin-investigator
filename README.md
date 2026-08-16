@@ -1,59 +1,16 @@
-# 🕵️ AI Financial Investigation Assistant — Multi-Agent A2A System
+# 🕵️ AI Financial Investigation Assistant
 
-A production-oriented **portfolio project** that runs a realistic financial-crime
-investigation using **seven specialized AI agents that collaborate over the
-[Agent2Agent (A2A) protocol, v1.0](https://a2a-protocol.org/)**.
+A multi-agent **financial-crime investigation** system built on the
+**[Agent2Agent (A2A) protocol, v1.0](https://a2a-protocol.org/)**. An analyst
+enters a customer; an **Orchestrator** delegates over real A2A to specialist
+agents; out comes a scored, explainable report with a recommended decision.
 
-> An analyst enters a customer scenario → the **Orchestrator** delegates over A2A
-> to **KYC · AML · Sanctions · Fraud · Risk · Reporting** agents → out comes a scored,
-> explainable investigation report with a recommended decision.
+```
+Analyst → UI → Orchestrator →(A2A)→ KYC · AML · Sanctions · Fraud · Risk → Reporting → Report
+```
 
-It's deliberately **small enough for one developer to own end-to-end**, but
-technically strong: real A2A wire format, JWT auth + RBAC, signed agent cards,
-an audit log, per-agent tracing, an evaluation harness, and a polished
-Streamlit UI.
-
-**Runs with zero external services and no API key** (fully deterministic), or with
-Postgres + LLM narrative when you want them.
-
----
-
-## Table of contents
-- [Overview](#overview)
-- [Architecture](#architecture)
-- [A2A workflow](#a2a-workflow)
-- [The seven agents](#the-seven-agents)
-- [A2A concepts implemented](#a2a-concepts-implemented-official-vs-ours)
-- [Security](#security-authentication--authorization)
-- [Observability](#observability)
-- [Reliability](#reliability)
-- [Evaluation](#evaluation)
-- [How to run](#how-to-run)
-- [Example investigation](#example-investigation)
-- [The UI](#the-ui)
-- [Screenshots](#screenshots)
-- [Project structure](#project-structure)
-- [Testing](#testing)
-- [Honest scope: official A2A vs our choices](#honest-scope-official-a2a-vs-our-choices)
-
----
-
-## Overview
-
-Financial institutions must screen customers for **money laundering, sanctions
-exposure and fraud**. That work naturally splits across specialists — which makes
-it a perfect showcase for **agent-to-agent collaboration**: one coordinator agent
-delegating to independent specialist agents, each with its own identity,
-capabilities and least-privilege permissions.
-
-This project implements exactly that, using A2A as the **inter-agent protocol**
-(not a bespoke RPC). Every hop between agents is a real A2A JSON-RPC call over
-HTTP, with Agent Cards, Tasks, Messages/Parts, Artifacts and a shared Context.
-
-**Source of truth:** the current A2A v1.0 specification and its Protocol Buffer
-definition. Where we simplify or make our own choices, it's called out explicitly
-(see [Honest scope](#honest-scope-official-a2a-vs-our-choices) and
-[`docs/a2a-spec-mapping.md`](docs/a2a-spec-mapping.md)).
+Runs with **no external services and no API key** (fully deterministic), or with
+Postgres + an optional LLM narrative when you want them.
 
 ---
 
@@ -62,353 +19,185 @@ definition. Where we simplify or make our own choices, it's called out explicitl
 ```mermaid
 flowchart TB
     A[👤 Analyst] --> UI[🖥️ Streamlit UI]
-    UI -->|REST: POST /investigations| GW[REST Gateway<br/>trusted human boundary]
-    GW -->|in-process| ORCH[🧭 Orchestrator Agent]
+    UI -->|REST| GW[REST Gateway]
+    GW --> ORCH[🧭 Orchestrator]
 
-    subgraph agents[Seven A2A agents · one process · each at /a2a/&lcub;role&rcub;]
+    subgraph agents[Six A2A agents · each at /a2a/&lcub;role&rcub; with its own Agent Card]
         ORCH -->|A2A JSON-RPC| KYC[🪪 KYC]
-        ORCH -->|A2A JSON-RPC| AML[💸 AML]
-        ORCH -->|A2A JSON-RPC| SANC[🚫 Sanctions]
-        ORCH -->|A2A JSON-RPC| FRAUD[🎣 Fraud]
-        ORCH -->|A2A JSON-RPC| RISK[📊 Risk]
-        ORCH -->|A2A JSON-RPC| REP[📝 Reporting]
+        ORCH -->|A2A| AML[💸 AML]
+        ORCH -->|A2A| SANC[🚫 Sanctions]
+        ORCH -->|A2A| FRAUD[🎣 Fraud]
+        ORCH -->|A2A| RISK[📊 Risk]
+        ORCH -->|A2A| REP[📝 Reporting]
     end
-
-    KYC & AML & SANC & FRAUD & RISK & REP -.discover.-> CARD[/.well-known/agent-card.json/]
 
     ORCH --> STORE[(Task store<br/>SQLite / Postgres)]
-    ORCH --> AUDIT[(Hash-chained<br/>audit log)]
-    ORCH --> TRACE[Trace + metrics<br/>latency · tokens · cost]
+    ORCH --> AUDIT[(Audit log)]
+    ORCH --> TRACE[Trace · metrics · cost]
 ```
 
-- **UI → REST → A2A** is a strict one-way boundary. The UI never speaks JSON-RPC.
-- All seven agents run in **one FastAPI process** (portfolio scale), each mounted at
-  `/a2a/{role}` with its **own Agent Card** and JSON-RPC endpoint. Splitting into
-  seven containers later is just a change of peer URLs — no code change.
+The UI only ever calls REST; every hop **between** agents is a real A2A JSON-RPC
+call over HTTP, sharing one `contextId`. All agents run in one FastAPI process —
+splitting them into separate containers is just a change of URLs.
+More detail: [`docs/architecture.md`](docs/architecture.md).
 
 ---
 
-## A2A workflow
+## The agents
 
-```mermaid
-sequenceDiagram
-    participant UI as Streamlit UI
-    participant GW as REST Gateway
-    participant O as Orchestrator
-    participant S as Specialist (KYC/AML/…)
-    UI->>GW: POST /investigations {profile}
-    GW->>O: SendMessage (A2A, caller=user:analyst)
-    Note over O: create Task, contextId C
-    loop KYC → AML → Sanctions → Fraud → Risk → Reporting
-        O->>S: GET /.well-known/agent-card.json (discover)
-        O->>S: SendMessage(message, contextId=C, +JWT)
-        Note over S: Task: SUBMITTED→WORKING→COMPLETED
-        S-->>O: Task + findings Artifact
-        O->>O: re-emit Artifact on its own Task
-    end
-    O-->>GW: Task(COMPLETED) with 6 artifacts
-    GW-->>UI: {task, trace, summary}
-```
-
-The single **`contextId`** threads the entire investigation — every specialist
-task shares it, which is what makes the trace and the "one case" view line up.
+| Agent | Does |
+|---|---|
+| 🧭 **Orchestrator** | Plans the investigation, delegates over A2A, aggregates results |
+| 🪪 **KYC** | Identity & document checks, PEP screening, data-quality, industry/PEP/geographic risk |
+| 💸 **AML** | Structuring, layering, cash/crypto intensity — analysed on the real transaction ledger |
+| 🚫 **Sanctions** | Fuzzy name matching (Jaro-Winkler) with STRONG / POSSIBLE / NONE tiers |
+| 🎣 **Fraud** | Account-takeover, card-testing, scam/new-payee, mule dispersal |
+| 📊 **Risk** | Blends five risk dimensions into a transparent score + confidence + decision |
+| 📝 **Reporting** | Writes the final report + recommended actions |
 
 ---
 
-## The seven agents
+## What it demonstrates
 
-| Agent | Role | What it does | Tools (least privilege) |
-|---|---|---|---|
-| 🧭 **Orchestrator** | Coordinator | Plans the investigation, delegates over A2A, aggregates artifacts, enforces reliability rails | — (calls other agents) |
-| 🪪 **KYC** | Know Your Customer | Identity/document verification, PEP screening, data-quality score | `verify_identity`, `screen_pep` |
-| 💸 **AML** | Anti-Money-Laundering | Structuring, layering, cash/crypto intensity, high-risk counterparties — per-transaction detail | `analyze_transactions` |
-| 🚫 **Sanctions** | Screening | Jaro-Winkler name matching with **STRONG / POSSIBLE / NONE** tiers; blocked-country check | `screen_sanctions` |
-| 🎣 **Fraud** | Fraud detection | Theft/deception typologies: account-takeover, card-testing, scam/new-payee transfers, mule dispersal | `detect_fraud` |
-| 📊 **Risk** | Scoring | Blends five risk dimensions into a transparent score + **confidence** + decision | — (aggregation only) |
-| 📝 **Reporting** | Report | Composes the final report + structured summary (optional LLM narrative) | — |
+**A2A protocol (v1.0)** — Agent Cards + discovery (`/.well-known/agent-card.json`),
+JSON-RPC methods (`SendMessage`, `GetTask`, `CancelTask`, streaming via SSE),
+Tasks & lifecycle, Messages/Parts, Artifacts, shared Context, the official error
+codes, `A2A-Version` negotiation, and signed Agent Cards. Wire format is
+spec-exact. *(Official-vs-ours ledger: [`docs/a2a-spec-mapping.md`](docs/a2a-spec-mapping.md).)*
 
-Each agent is an `AgentExecutor` (the pattern from the official A2A SDK): it
-publishes status/artifact **events** rather than returning a value, so the exact
-same agent code works for both non-streaming and streaming (SSE) calls.
+**Security** — JWT authentication + RBAC least-privilege (a specialist token can
+call nobody), signed cards + peer allowlist, rate limiting, input validation,
+prompt-injection guard, secret redaction, and a hash-chained (tamper-evident)
+audit log.
 
----
+**Human-in-the-loop & reliability** — high-stakes cases (HIGH/CRITICAL, SAR, or a
+sanctions hit) pause at the A2A `INPUT_REQUIRED` state for an analyst to
+**approve / override / close** before anything is filed; plus timeouts, retries
+with backoff, loop caps, and an honest `FAILED` (never a misleading "clean"
+result) when a step breaks.
 
-## A2A concepts implemented (official vs ours)
+**Observability** — a per-investigation trace (latency · tokens · cost · errors),
+counters + latency percentiles at `/metrics`, and structured JSON logs.
 
-| A2A concept | Implemented | Where |
-|---|---|---|
-| **Agent Card** | ✅ | `app/a2a/agent_card.py`, `app/agents/cards.py` |
-| **Agent discovery** | ✅ `GET /.well-known/agent-card.json` | `app/a2a/client.py::discover` |
-| **JSON-RPC methods** | ✅ `SendMessage`, `SendStreamingMessage`, `GetTask`, `CancelTask` (+ v0.3 aliases) | `app/a2a/server.py` |
-| **Messages / Parts** | ✅ text + structured `data` parts | `app/a2a/types.py` |
-| **Tasks + lifecycle** | ✅ `SUBMITTED→WORKING→COMPLETED/FAILED/…` with enforced transitions | `app/a2a/task_store.py` |
-| **Human-in-the-loop** | ✅ high-stakes cases pause at `TASK_STATE_INPUT_REQUIRED`, resume on an analyst decision (same task/context) | `app/agents/orchestrator.py` |
-| **Artifacts** | ✅ each agent's findings | `app/a2a/types.py::Artifact` |
-| **Context** | ✅ one shared `contextId` across all agents | orchestrator |
-| **Streaming** | ✅ SSE (`SendStreamingMessage`) | `app/a2a/server.py`, `client.py` |
-| **Error handling** | ✅ official error codes `-32001…-32009` | `app/a2a/errors.py` |
-| **Version negotiation** | ✅ `A2A-Version` header, `VersionNotSupported` (-32009) | `app/a2a/server.py` |
-| **Signed Agent Cards** | ✅ JWS-style signature + verify (rogue-agent defense) | `app/security/signing.py` |
-
-**Wire format is spec-exact v1.0** — the two things most tutorials get wrong:
-camelCase fields (`contextId`, `mediaType`) and SCREAMING_SNAKE enums
-(`TASK_STATE_WORKING`, `ROLE_AGENT`). Pinned by tests.
+**Evaluation** — a deterministic harness scoring the system on six dimensions
+(task success · routing · quality · consistency · latency · cost), gating at 80%.
 
 ---
 
-## Security (Authentication ≠ Authorization)
+## Run it
 
-> **Authentication = _who are you?_** → a signed **JWT** proves identity (`sub`).
-> **Authorization = _what may you do?_** → the **scopes** in that JWT, checked by RBAC.
-
-| Control | How | File |
-|---|---|---|
-| **Authentication (JWT)** | Bearer token per call; issuer/audience/expiry validated | `app/security/jwt_auth.py` |
-| **Authorization (RBAC / least privilege)** | Scope matrix: orchestrator may invoke specialists, specialists may invoke **nobody**, user may only start an investigation | `app/security/rbac.py` |
-| **Secure agent comms** | Mutual auth — the orchestrator mints its **own** token to call each specialist; auth failures are HTTP **401/403** (A2A treats auth as transport-level) | `app/security/authn.py` |
-| **Rogue-agent defense** | Signed Agent Cards + a static peer allowlist (only configured URLs are ever called) | `app/security/signing.py` |
-| **Input validation** | Part/size limits + Pydantic profile validation | `app/security/validation.py` |
-| **Rate limiting** | Token-bucket per client (HTTP middleware) | `app/security/rate_limit.py` |
-| **Prompt-injection protection** | Deterministic scoring can't be moved by text; plus injection scan (audited) + sanitizing before any LLM call | `app/security/prompt_guard.py` |
-| **Secrets management** | All secrets via env/`SecretStr`; logs **redact** tokens/keys | `app/config.py`, `app/observability/logging.py` |
-| **Audit logging** | Append-only, **hash-chained** (tamper-evident) | `app/security/audit.py` |
-| **Tool-level least privilege** | The tool registry blocks a role from calling a tool it isn't granted (e.g. Risk can't screen sanctions) | `app/tools/registry.py` |
-
-Least privilege is **structural**: a stolen KYC token can call nobody; a stolen
-user token can't call KYC directly (missing `a2a:invoke:kyc`) — both proven by
-tests. All controls are settings-driven toggles (`REQUIRE_AGENT_AUTH`,
-`REQUIRE_SIGNED_AGENT_CARDS`, `RATE_LIMIT_ENABLED`), **on in docker-compose**.
-
----
-
-## Observability
-
-Lightweight, dependency-free (no external collector needed):
-
-- **Structured JSON logs** with secret redaction.
-- **Per-investigation trace** — one span per A2A hop, keyed by `contextId`,
-  capturing **latency · tokens · cost · errors · status**.
-- **Metrics** — counters (investigations, A2A calls, errors) + latency
-  avg/p50/p95, exposed at `GET /metrics`.
-- **Cost/tokens** — real LLM tokens when enabled (0 in deterministic mode) plus
-  an honest "estimated tokens" heuristic so the dashboard is meaningful either way.
-
-Everything the UI's trace timeline and KPI cards show comes from this layer.
-
----
-
-## Reliability
-
-- **Timeouts** on every peer call and on the whole task.
-- **Retries with exponential backoff + jitter** — only for transient failures
-  (network, 5xx, 429); deterministic 4xx/app errors are never retried.
-- **Loop protection** — a delegation-depth guard and a max-iteration cap.
-- **Graceful-but-honest degradation** — a failed specialist doesn't crash the run,
-  but the investigation is marked **FAILED**, never a misleading "clean" result.
-- **Task cancellation** via `CancelTask`.
-- **Human-in-the-loop** — a HIGH/CRITICAL, SAR, or sanctions-hit outcome is never
-  auto-filed: the task pauses at the A2A `INPUT_REQUIRED` state and waits for an
-  analyst to **approve / override / close** (recorded in the audit log) before
-  the report is produced. Low-risk cases auto-complete. Toggle with
-  `REQUIRE_HUMAN_REVIEW`.
-
----
-
-## Evaluation
-
-A deterministic eval harness scores the system against labelled scenarios across
-**six dimensions**: task success · agent routing · answer quality · factual
-consistency · latency · cost.
-
-```bash
-python -m app.evaluation
-```
-```
-[PASS] sanctioned_structurer   CRITICAL
-[PASS] clean_customer          LOW
-[PASS] pep_high_risk_country   MEDIUM
-[PASS] layering_ring           HIGH
-[PASS] prompt_injection        LOW   (injection did not move the score)
-OVERALL PASS RATE: 100% (5/5)   every dimension avg = 1.00
-```
-
-The evaluators **discriminate** (they fail on a wrong answer — tested), and the
-harness already caught a real scoring bug during development.
-
----
-
-## How to run
-
-### Option A — Docker (full stack: API + UI + Postgres, security on)
-
+**Docker (API + UI + Postgres):**
 ```bash
 docker compose up --build
 ```
-- UI  → http://localhost:8501
-- API → http://localhost:8000  (`/healthz`, `/metrics`, `/investigations`)
+UI → http://localhost:8501 · API → http://localhost:8000
 
-### Option B — Local (SQLite, no external services)
-
+**Local (SQLite, no external services):**
 ```bash
-python -m venv .venv && source .venv/Scripts/activate   # Windows Git Bash
 pip install -r requirements.txt
-
-# Terminal 1 — the seven A2A agents + REST gateway
 uvicorn app.main:app --port 8000
-
-# Terminal 2 — the UI
+```
+```bash
 API_BASE_URL=http://localhost:8000 streamlit run ui/app.py
 ```
 
-### Try it from the terminal
-
+**From the terminal:**
 ```bash
-curl -s -X POST http://localhost:8000/investigations \
-  -H "Content-Type: application/json" \
-  -d '{"profile":{"full_name":"Viktor Petrov","country":"Russia",
-       "date_of_birth":"1975-03-11","declared_source_of_funds":"consulting",
-       "notes":"cash just under threshold; rapid transfers",
-       "id_document":{"number":"RU8837261"}}}'
+curl -s -X POST http://localhost:8000/investigations -H "Content-Type: application/json" -d '{"profile":{"full_name":"Viktor Petrov","country":"Russia","notes":"cash just under threshold; rapid transfers","id_document":{"number":"RU8837261"}}}'
+```
+
+**Tests & evaluation:**
+```bash
+pytest -q
+```
+```bash
+python -m app.evaluation
 ```
 
 ---
 
-## Example investigation
+## Example
 
 Input: *Viktor Petrov, Russia, "cash just under threshold; rapid transfers".*
 
-Output (abridged):
-
 ```
 Decision:   DECLINE & FILE SAR
-Risk score: 100/100 (CRITICAL)   Confidence: 100/100 (HIGH)   SAR: YES
+Risk score: 100/100 (CRITICAL)   Confidence: HIGH   SAR: YES
 
-Score breakdown:
-  sanctions_hit            +45   matched Viktor Petrov (RUSSIA-EO14024)
-  structuring              +20   9 transactions just under the 10,000 threshold
-  pep                      +15   regional governor
-  rapid_movement           +12   rapid pass-through of funds
-  residence_high_risk      +10   high-risk residence (Russia)
-  high_risk_counterparties +10   anonymous wallet, shell corp bvi, …   → capped at 100
-
-Recommended actions:
-  ☐ Confirm the sanctions match against the official list and block transactions
-  ☐ Freeze onboarding / account activity
-  ☐ File a Suspicious Activity Report (SAR)
-  ☐ Escalate to the MLRO / compliance immediately
-  … (7 total)
-
-A2A trace: kyc 406ms · aml 79ms · sanctions 95ms · risk 92ms · reporting 69ms
+Top drivers: sanctions hit (+45) · structuring (+20) · PEP (+15) ·
+             rapid movement (+12) · high-risk residence (+10)
 ```
 
-Every point of the score traces to a named factor — exactly what a compliance
-analyst needs to defend a decision.
+Every point of the score traces to a named factor.
 
 ---
 
 ## The UI
 
-A polished, analyst-oriented **case file** (Streamlit). One investigation shows:
-
-- **Decision banner** — headline verdict (`DECLINE & FILE SAR`), band, **confidence bar**, SAR flag.
-- **Subject block** — the customer's identity at a glance.
-- **A2A communication flow** — the agents animate to ✓ with **per-hop latency**.
-- **Risk gauge + transparent score breakdown** — see *how* the number was reached.
-- **Findings tabs** — KYC field-checks · AML **flagged-transactions table** (drill into the exact suspicious transactions) · Sanctions **match table with tier**.
-- **Analyst action checklist**, the full report (with **download**), and the **execution-trace timeline**.
-- Plus **Case History** (DB-backed) and a **Live Metrics** dashboard.
-
-> The UI talks only to the REST API, so it can point at any deployment by
-> changing one URL.
+A dark, analyst-oriented **case file** (Streamlit): a full KYC intake form + an
+editable transaction ledger, then a results view with the **decision banner**,
+the **A2A flow** (per-hop latency), a **five-dimension risk radar** + transparent
+score breakdown, **findings tabs** (KYC · AML flagged transactions · Sanctions ·
+Fraud), a recommended-actions checklist, the downloadable report, case history,
+and a live metrics dashboard.
 
 ---
 
 ## Screenshots
 
 > Drop four PNGs into [`docs/screenshots/`](docs/screenshots/) (see the
-> [capture guide](docs/screenshots/CAPTURE_GUIDE.md)) and the grid below renders.
-> Suggested viewport: **1280×800**, dark theme.
+> [capture guide](docs/screenshots/CAPTURE_GUIDE.md)) and this grid renders.
 
 <table>
   <tr>
     <td width="50%" valign="top">
       <img src="docs/screenshots/intake.png" alt="KYC intake form" width="100%">
-      <br><sub><b>1 · Intake</b> — the full KYC record (identity, employment &amp; wealth,
-      account &amp; onboarding, ID) plus an editable transaction ledger.</sub>
+      <br><sub><b>1 · Intake</b> — the KYC record + editable transaction ledger.</sub>
     </td>
     <td width="50%" valign="top">
       <img src="docs/screenshots/results.png" alt="Investigation results" width="100%">
-      <br><sub><b>2 · Results</b> — decision banner, the A2A flow with per-hop latency,
-      and the five-dimension risk radar + transparent score breakdown.</sub>
+      <br><sub><b>2 · Results</b> — decision banner, A2A flow, and the risk radar.</sub>
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
       <img src="docs/screenshots/findings.png" alt="Findings tabs" width="100%">
-      <br><sub><b>3 · Findings</b> — KYC field-checks, AML flagged-transactions table,
-      sanctions match tiers, and fraud typologies.</sub>
+      <br><sub><b>3 · Findings</b> — flagged transactions, sanctions tiers, fraud.</sub>
     </td>
     <td width="50%" valign="top">
       <img src="docs/screenshots/human-review.png" alt="Human-in-the-loop review" width="100%">
-      <br><sub><b>4 · Human-in-the-loop</b> — a high-stakes case paused at the A2A
-      <code>INPUT_REQUIRED</code> state for analyst approve / override / close.</sub>
+      <br><sub><b>4 · Human-in-the-loop</b> — a paused case awaiting analyst sign-off.</sub>
     </td>
   </tr>
 </table>
 
 ---
 
-## Project structure
+## Project layout
 
 ```
 app/
-  a2a/            # A2A v1.0 protocol core (finance-agnostic, reusable)
-  agents/         # the seven agents + cards + schemas + optional LLM
+  a2a/            # A2A v1.0 protocol core (reusable, finance-agnostic)
+  agents/         # the six agents + cards + schemas
   security/       # JWT, RBAC, signing, validation, rate limit, prompt guard, audit
-  tools/          # mock KYC/AML/sanctions tools + least-privilege registry
-  database/       # SQLAlchemy models, SQLite/Postgres store, repository
+  tools/          # KYC/AML/sanctions/fraud tools + least-privilege registry
+  database/       # SQLAlchemy models, SQLite/Postgres store
   observability/  # logging, trace, metrics, cost
-  evaluation/     # scenarios, evaluators, runner, CLI
-  api/            # FastAPI factory + human REST routes
-  config.py       # single source of configuration
-ui/               # Streamlit app + components (self-contained HTML/SVG)
-tests/            # 47 tests across protocol, agents, persistence, security, obs, eval
-docs/             # a2a-spec-mapping.md (official vs ours)
-Dockerfile · docker-compose.yml · .env.example · requirements.txt
+  evaluation/     # scenarios, evaluators, runner
+  api/            # FastAPI factory + REST routes
+ui/               # Streamlit app
+tests/            # 54 tests
+docs/             # architecture.md · a2a-spec-mapping.md
 ```
 
 ---
 
-## Testing
+## Scope
 
-```bash
-pytest -q            # 47 tests
-python -m app.evaluation   # eval scorecard (gates at 80%)
-```
+Built on the A2A v1.0 spec as the source of truth. Deliberately omitted (not
+needed here): push-notification configs, the gRPC binding, and multi-tenancy.
+The finance domain, risk model, security, observability, evaluation and UI are
+implementation choices — the honest ledger is in
+[`docs/a2a-spec-mapping.md`](docs/a2a-spec-mapping.md).
 
-Suites: protocol conformance · agents/tools · persistence + restart replay ·
-security (auth/RBAC/signing/audit/injection/rate-limit) · observability · evaluation.
-
----
-
-## Honest scope: official A2A vs our choices
-
-This project is careful about what is **official A2A** versus an **implementation
-choice**. Full field-by-field ledger: [`docs/a2a-spec-mapping.md`](docs/a2a-spec-mapping.md).
-
-In short:
-- **Official & implemented:** Agent Card + discovery, JSON-RPC methods (v1.0
-  PascalCase + v0.3 aliases), Message/Part/Task/TaskStatus/Artifact, streaming
-  events, error codes, `A2A-Version` negotiation, signed cards.
-- **Deliberately omitted (not needed for the demo):** push-notification configs,
-  the gRPC binding, multi-tenancy, `ListTasks`/`SubscribeToTask` (return
-  `UnsupportedOperation`).
-- **Our own (not A2A):** the finance domain + risk model, JWT/RBAC scheme, the
-  REST gateway, persistence, observability, evaluation and the UI. Signed-card
-  canonicalization uses `json.dumps(sort_keys=True)` — a pragmatic stand-in for
-  the spec's RFC 8785.
-
----
-
-*Built as a portfolio project. The financial data and
-sanctions/PEP lists are entirely fictional.*
+*Portfolio project. The financial data and sanctions/PEP lists are entirely fictional.*
