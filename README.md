@@ -8,10 +8,10 @@ investigation using **seven specialized AI agents that collaborate over the
 > to **KYC · AML · Sanctions · Fraud · Risk · Reporting** agents → out comes a scored,
 > explainable investigation report with a recommended decision.
 
-It's deliberately **small enough for one developer to explain end-to-end in an
-interview**, but technically strong: real A2A wire format, JWT auth + RBAC,
-signed agent cards, an audit log, per-agent tracing, an evaluation harness, and
-a polished Streamlit UI.
+It's deliberately **small enough for one developer to own end-to-end**, but
+technically strong: real A2A wire format, JWT auth + RBAC, signed agent cards,
+an audit log, per-agent tracing, an evaluation harness, and a polished
+Streamlit UI.
 
 **Runs with zero external services and no API key** (fully deterministic), or with
 Postgres + LLM narrative when you want them.
@@ -34,7 +34,6 @@ Postgres + LLM narrative when you want them.
 - [Screenshots](#screenshots)
 - [Project structure](#project-structure)
 - [Testing](#testing)
-- [Interview talking points](#interview-talking-points)
 - [Honest scope: official A2A vs our choices](#honest-scope-official-a2a-vs-our-choices)
 
 ---
@@ -392,31 +391,6 @@ security (auth/RBAC/signing/audit/injection/rate-limit) · observability · eval
 
 ---
 
-## Interview talking points
-
-- **"Same agent code, streaming or not."** Agents publish events to a queue; the
-  server drains it either as a final Task or as SSE. That inversion is the core
-  design idea.
-- **Authentication vs authorization, made concrete.** JWT proves identity; scopes
-  decide access. Least privilege is structural — a specialist token can call
-  nobody. Auth is transport-level (401/403), per the spec.
-- **The evaluation harness caught a real bug** that 42 unit tests missed (clean
-  customers scoring MEDIUM) — because `factual_consistency` passed while the
-  *findings* were wrong. Great story about why you evaluate, not just test.
-- **Trustworthy, transparent scores.** Every risk point maps to a weighted factor,
-  with a confidence measure driven by data completeness + corroboration.
-- **Honest degradation.** A broken pipeline is marked FAILED, never a misleading
-  "clean" result — the safety-critical default for a compliance tool.
-- **Human-in-the-loop the *right* way.** Rather than a bespoke pause, I use the
-  A2A `INPUT_REQUIRED` lifecycle state: high-stakes cases pause, and the *same*
-  task/context resumes when the analyst decides — approve, override or close,
-  all audit-logged. Shows I understand the task lifecycle beyond the happy path.
-- **Clean layering.** The `app/a2a` protocol layer imports nothing from
-  `app/security` or `app/observability`; those are *injected* by the factory.
-- **I distinguish the spec from my choices** — see the mapping doc below.
-
----
-
 ## Honest scope: official A2A vs our choices
 
 This project is careful about what is **official A2A** versus an **implementation
@@ -436,5 +410,5 @@ In short:
 
 ---
 
-*Built as a learning + interview portfolio project. The financial data and
+*Built as a portfolio project. The financial data and
 sanctions/PEP lists are entirely fictional.*
