@@ -26,22 +26,22 @@ Postgres + an optional LLM narrative when you want them.
 
 ```mermaid
 flowchart TB
-    A[👤 Analyst] --> UI[🖥️ Streamlit UI]
-    UI -->|REST| GW[REST Gateway]
-    GW --> ORCH[🧭 Orchestrator]
+    A["👤 Analyst"] --> UI["🖥️ Streamlit UI"]
+    UI -->|REST| GW["REST Gateway"]
+    GW --> ORCH["🧭 Orchestrator"]
 
-    subgraph agents[Six A2A agents · each at /a2a/&lcub;role&rcub; with its own Agent Card]
-        ORCH -->|A2A JSON-RPC| KYC[🪪 KYC]
-        ORCH -->|A2A| AML[💸 AML]
-        ORCH -->|A2A| SANC[🚫 Sanctions]
-        ORCH -->|A2A| FRAUD[🎣 Fraud]
-        ORCH -->|A2A| RISK[📊 Risk]
-        ORCH -->|A2A| REP[📝 Reporting]
+    subgraph agents["Six A2A agents, each with its own Agent Card"]
+        ORCH -->|A2A JSON-RPC| KYC["🪪 KYC"]
+        ORCH -->|A2A| AML["💸 AML"]
+        ORCH -->|A2A| SANC["🚫 Sanctions"]
+        ORCH -->|A2A| FRAUD["🎣 Fraud"]
+        ORCH -->|A2A| RISK["📊 Risk"]
+        ORCH -->|A2A| REP["📝 Reporting"]
     end
 
-    ORCH --> STORE[(Task store<br/>SQLite / Postgres)]
-    ORCH --> AUDIT[(Audit log)]
-    ORCH --> TRACE[Trace · metrics · cost]
+    ORCH --> STORE[("Task store — SQLite or Postgres")]
+    ORCH --> AUDIT[("Audit log")]
+    ORCH --> TRACE["Trace, metrics, cost"]
 ```
 
 The UI only ever calls REST; every hop **between** agents is a real A2A JSON-RPC
