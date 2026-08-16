@@ -31,6 +31,7 @@ Postgres + LLM narrative when you want them.
 - [How to run](#how-to-run)
 - [Example investigation](#example-investigation)
 - [The UI](#the-ui)
+- [Screenshots](#screenshots)
 - [Project structure](#project-structure)
 - [Testing](#testing)
 - [Interview talking points](#interview-talking-points)
@@ -320,6 +321,41 @@ A polished, analyst-oriented **case file** (Streamlit). One investigation shows:
 
 > The UI talks only to the REST API, so it can point at any deployment by
 > changing one URL.
+
+---
+
+## Screenshots
+
+> Drop four PNGs into [`docs/screenshots/`](docs/screenshots/) (see the
+> [capture guide](docs/screenshots/CAPTURE_GUIDE.md)) and the grid below renders.
+> Suggested viewport: **1280×800**, dark theme.
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/intake.png" alt="KYC intake form" width="100%">
+      <br><sub><b>1 · Intake</b> — the full KYC record (identity, employment &amp; wealth,
+      account &amp; onboarding, ID) plus an editable transaction ledger.</sub>
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/results.png" alt="Investigation results" width="100%">
+      <br><sub><b>2 · Results</b> — decision banner, the A2A flow with per-hop latency,
+      and the five-dimension risk radar + transparent score breakdown.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/findings.png" alt="Findings tabs" width="100%">
+      <br><sub><b>3 · Findings</b> — KYC field-checks, AML flagged-transactions table,
+      sanctions match tiers, and fraud typologies.</sub>
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/human-review.png" alt="Human-in-the-loop review" width="100%">
+      <br><sub><b>4 · Human-in-the-loop</b> — a high-stakes case paused at the A2A
+      <code>INPUT_REQUIRED</code> state for analyst approve / override / close.</sub>
+    </td>
+  </tr>
+</table>
 
 ---
 
