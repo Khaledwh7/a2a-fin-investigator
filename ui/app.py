@@ -719,24 +719,13 @@ def view_history(api_url: str) -> None:
         if cols[3].button("Open", key=f"open_{r['task_id']}"):
             detail = api.get_investigation(api_url, r["task_id"])
             if detail:
+                # Reuse the API's rich summary (decision, confidence, pending_review,
+                # recommended actions) so the opened case renders exactly like a run.
                 st.session_state.last_result = {
                     "task": detail["task"], "trace": detail.get("trace"),
-                    "summary": _summary_from(detail)}
+                    "summary": detail.get("summary", {})}
                 st.session_state.nav = "🔎 Investigate"
                 st.rerun()
-
-
-def _summary_from(detail: dict) -> dict:
-    task, trace = detail["task"], detail.get("trace") or {}
-    rep = next((p.get("data") for a in task.get("artifacts", [])
-                if a.get("name") == "investigation_report"
-                for p in a.get("parts", []) if "data" in p), {}) or {}
-    return {"state": task.get("status", {}).get("state"),
-            "risk_score": rep.get("risk_score"), "risk_band": rep.get("risk_band"),
-            "sar_recommended": rep.get("sar_recommended"),
-            "latency_ms": trace.get("wall_ms"), "agent_calls": trace.get("agent_calls"),
-            "est_tokens": trace.get("est_tokens"), "llm_tokens": trace.get("llm_tokens"),
-            "cost_usd": trace.get("cost_usd")}
 
 
 def view_metrics(api_url: str) -> None:
@@ -760,6 +749,45 @@ def view_metrics(api_url: str) -> None:
         st.json(m)
 
 
+def view_audit(api_url: str) -> None:
+    st.markdown("### Audit log")
+    st.caption("Every security-relevant event — auth allow/deny, investigations, "
+               "prompt-injection flags and analyst decisions — is appended to a "
+               "**hash-chained** log. Editing any past entry breaks the chain.")
+    a = api.get_audit(api_url, limit=200)
+    if not a:
+        st.info("Audit log is empty, or the API is unreachable.")
+        return
+
+    valid = a.get("chain_valid")
+    st.markdown(
+        (pill("✓ chain verified — tamper-evident", "#30a46c") if valid
+         else pill("✗ chain broken — tampering detected", "#e5484d"))
+        + f' &nbsp; <span class="muted">{a.get("count", 0)} entries</span>',
+        unsafe_allow_html=True)
+
+    entries = list(reversed(a.get("entries", [])))  # newest first
+    if entries:
+        rows = "".join(
+            f'<tr><td>{e["seq"]}</td><td>{(e["ts"] or "")[11:19]}</td>'
+            f'<td>{e["actor"]}</td><td>{e["action"]}</td><td>{e["resource"]}</td>'
+            f'<td>{_outcome_pill(e["outcome"])}</td>'
+            f'<td style="font-family:monospace;color:#8b93a7">{e["hash"]}</td></tr>'
+            for e in entries)
+        st.markdown(
+            '<table class="mini"><tr><th>#</th><th>Time</th><th>Actor</th>'
+            '<th>Action</th><th>Resource</th><th>Outcome</th><th>Hash</th></tr>'
+            f'{rows}</table>', unsafe_allow_html=True)
+
+
+def _outcome_pill(outcome: str) -> str:
+    o = (outcome or "").lower()
+    color = ("#e5484d" if o.startswith("denied") or o == "degraded"
+             else "#f76808" if o in {"flagged", "input_required"}
+             else "#30a46c")
+    return pill(outcome, color)
+
+
 def view_about() -> None:
     st.markdown("### What this demonstrates")
     a, b = st.columns(2)
@@ -771,7 +799,8 @@ def view_about() -> None:
                      "Tasks & lifecycle (SUBMITTED→WORKING→COMPLETED/FAILED)",
                      "Artifacts (each agent's findings)",
                      "Shared Context (one `contextId` across all agents)",
-                     "Streaming (SSE) + version negotiation (`A2A-Version`)"]:
+                     "Streaming (SSE) + version negotiation (`A2A-Version`)",
+                     "Human-in-the-loop review (A2A `INPUT_REQUIRED`)"]:
             st.markdown(f"- ✅ {item}")
     with b:
         st.markdown("#### Security · Observability · Reliability")
@@ -786,7 +815,7 @@ def view_about() -> None:
     st.markdown("---")
     st.markdown(
         "**Architecture:** `User → Streamlit UI → REST gateway → Orchestrator "
-        "→ (A2A) KYC · AML · Sanctions · Risk → Reporting → Report`. "
+        "→ (A2A) KYC · AML · Sanctions · Fraud · Risk → Reporting → Report`. "
         "The UI only ever calls the REST API; agents talk to each other over "
         "real A2A JSON-RPC.")
 
@@ -806,7 +835,7 @@ def sidebar() -> tuple[str, str]:
 
         st.divider()
         st.radio("View", ["🔎 Investigate", "🗂 Case history",
-                          "📈 Live metrics", "ℹ️ About"], key="nav")
+                          "📈 Live metrics", "🔒 Audit log", "ℹ️ About"], key="nav")
         st.divider()
         st.caption("⚠️ Simulation with fictional sanctions/PEP watchlists — for "
                    "demonstration only.")
@@ -830,6 +859,8 @@ def main() -> None:
         view_history(api_url)
     elif nav == "📈 Live metrics":
         view_metrics(api_url)
+    elif nav == "🔒 Audit log":
+        view_audit(api_url)
     else:
         view_about()
 

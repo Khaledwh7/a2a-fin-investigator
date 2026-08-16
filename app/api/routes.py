@@ -142,7 +142,18 @@ def register_human_api(app: FastAPI) -> None:
         if task is None:
             raise HTTPException(status_code=404, detail="investigation not found")
         trace_obj = app.state.trace_store.get(task.context_id)
-        return {"task": task.to_wire(),
-                "trace": trace_obj.to_dict() if trace_obj else None}
+        trace = trace_obj.to_dict() if trace_obj else None
+        return {"task": task.to_wire(), "trace": trace,
+                "summary": _summary(task, trace)}
+
+    @router.get("/audit")
+    async def audit_log(limit: int = 50) -> dict[str, Any]:  # noqa: ANN202
+        """The tamper-evident audit trail + a live chain-integrity check."""
+        entries = await app.state.audit.entries()
+        chain_valid = await app.state.audit.verify_chain()
+        rows = [{"seq": e.seq, "ts": e.ts, "actor": e.actor, "action": e.action,
+                 "resource": e.resource, "outcome": e.outcome, "detail": e.detail,
+                 "hash": e.entry_hash[:12]} for e in entries[-limit:]]
+        return {"chain_valid": chain_valid, "count": len(entries), "entries": rows}
 
     app.include_router(router)

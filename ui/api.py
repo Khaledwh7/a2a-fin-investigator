@@ -75,3 +75,9 @@ def get_metrics(base_url: str) -> dict[str, Any]:
     with _client(base_url) as c:
         resp = c.get("/metrics")
     return resp.json() if resp.status_code == 200 else {}
+
+
+def get_audit(base_url: str, limit: int = 100) -> dict[str, Any]:
+    with _client(base_url) as c:
+        resp = c.get("/audit", params={"limit": limit})
+    return resp.json() if resp.status_code == 200 else {}

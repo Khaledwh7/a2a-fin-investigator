@@ -194,7 +194,7 @@ app/
   evaluation/     # scenarios, evaluators, runner
   api/            # FastAPI factory + REST routes
 ui/               # Streamlit app
-tests/            # 54 tests
+tests/            # 55 tests
 docs/             # architecture.md · a2a-spec-mapping.md
 ```
 

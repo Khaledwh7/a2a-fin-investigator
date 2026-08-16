@@ -124,6 +124,22 @@ async def test_rest_api_investigation_flow(app_client):
         one = (await http.get(f"/investigations/{task_id}")).json()
         assert one["task"]["id"] == task_id
         assert one["trace"]["agent_calls"] == 6
+        # Detail carries the same rich summary as a fresh run (Case-History "Open").
+        assert one["summary"]["decision"]
+        assert one["summary"]["customer"] == "Viktor Petrov"
+
+
+async def test_audit_endpoint_reports_chain_and_events(app_client):
+    _settings, _app, transport = app_client
+    async with httpx.AsyncClient(transport=transport, base_url="http://api") as http:
+        await http.post("/investigations",
+                        json={"profile": CustomerProfile.demo().model_dump()})
+        audit = (await http.get("/audit")).json()
+        assert audit["chain_valid"] is True          # tamper-evident chain holds
+        assert audit["count"] >= 2
+        actions = {e["action"] for e in audit["entries"]}
+        assert {"investigation_started", "investigation_completed"} <= actions
+        assert all("hash" in e for e in audit["entries"])
 
 
 async def test_rest_api_validation_rejects_bad_profile(app_client):
