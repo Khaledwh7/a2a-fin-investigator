@@ -57,9 +57,9 @@ More detail: [`docs/architecture.md`](docs/architecture.md).
 |---|---|
 | 🧭 **Orchestrator** | Plans the investigation, delegates over A2A, aggregates results |
 | 🪪 **KYC** | Identity & document checks, PEP screening, data-quality, industry/PEP/geographic risk |
-| 💸 **AML** | Structuring, layering, cash/crypto intensity — analysed on the real transaction ledger |
-| 🚫 **Sanctions** | Fuzzy name matching (Jaro-Winkler) with STRONG / POSSIBLE / NONE tiers |
-| 🎣 **Fraud** | Account-takeover, card-testing, scam/new-payee, mule dispersal |
+| 💸 **AML** | Structuring, layering, cash/crypto intensity, and **date-based velocity** (a burst of activity in a 7-day window) — analysed on the real transaction ledger |
+| 🚫 **Sanctions** | Jaro-Winkler name matching (STRONG / POSSIBLE / NONE tiers) — screens the customer **and every beneficiary they pay**; a payment to a sanctioned party is treated as seriously as being one |
+| 🎣 **Fraud** | Account-takeover, card-testing, scam/new-payee, mule dispersal, velocity spikes |
 | 📊 **Risk** | Blends five risk dimensions into a transparent score + confidence + decision |
 | 📝 **Reporting** | Writes the final report + recommended actions |
 
