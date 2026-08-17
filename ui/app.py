@@ -39,6 +39,7 @@ from ui.components import (
     trace_timeline,
     transactions_table,
 )
+from ui.embed import maybe_start_embedded_api
 
 # Transaction ledger columns (must match the AML engine's Transaction schema).
 _LEDGER_COLS = ["date", "amount", "direction", "counterparty", "channel", "country"]
@@ -841,12 +842,14 @@ def view_about() -> None:
 # --------------------------------------------------------------------------- #
 # Layout
 # --------------------------------------------------------------------------- #
-def sidebar() -> tuple[str, str]:
+def sidebar(embedded_url: str | None = None) -> tuple[str, str]:
     with st.sidebar:
         st.markdown("## 🕵️ A2A Financial Investigator")
         st.caption("Multi-agent financial-crime detection over the "
                    "Agent2Agent (A2A) protocol.")
-        api_url = st.text_input("API base URL", api.DEFAULT_API)
+        # When the API runs in-process (single-service deploy), lock the URL.
+        api_url = st.text_input("API base URL", embedded_url or api.DEFAULT_API,
+                                disabled=bool(embedded_url))
         online = api.health(api_url)
         st.markdown(pill("● API online", "#30a46c") if online
                     else pill("● API offline", "#e5484d"), unsafe_allow_html=True)
@@ -870,7 +873,8 @@ def main() -> None:
         'the Agent2Agent (A2A) protocol — KYC · AML · Sanctions · Fraud · Risk · '
         'Reporting</div></div>', unsafe_allow_html=True)
 
-    api_url, nav = sidebar()
+    embedded_url = maybe_start_embedded_api()   # single-service deploy (Streamlit Cloud)
+    api_url, nav = sidebar(embedded_url)
     if nav == "🔎 Investigate":
         view_investigate(api_url)
     elif nav == "🗂 Case history":

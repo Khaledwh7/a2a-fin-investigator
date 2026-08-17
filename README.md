@@ -17,6 +17,9 @@ agents; out comes a scored, explainable report with a recommended decision.
 Analyst → UI → Orchestrator →(A2A)→ KYC · AML · Sanctions · Fraud · Risk → Reporting → Report
 ```
 
+**▶ Live demo:** deploy your own in ~3 minutes on Streamlit Community Cloud —
+see [`DEPLOY.md`](DEPLOY.md). *(Add your `https://<app>.streamlit.app` link here.)*
+
 Runs with **no external services and no API key** (fully deterministic), or with
 Postgres + an optional LLM narrative when you want them.
 
