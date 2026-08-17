@@ -54,7 +54,8 @@ def _starter_ledger() -> list[dict]:
 
 
 def _sample_ledger() -> list[dict]:
-    """A mixed ledger that exercises several AML typologies — edit or delete rows."""
+    """A mixed ledger exercising several typologies — structuring, pass-through,
+    a dated velocity burst, and a payment to a sanctioned beneficiary. Edit freely."""
     return [
         {"date": "2026-01-03", "amount": 3200.0, "direction": "in",
          "counterparty": "Acme Payroll", "channel": "transfer", "country": ""},
@@ -64,15 +65,18 @@ def _sample_ledger() -> list[dict]:
          "counterparty": "Cash Deposit", "channel": "cash", "country": ""},
         {"date": "2026-01-15", "amount": 9500.0, "direction": "in",
          "counterparty": "Cash Deposit", "channel": "cash", "country": ""},
-        {"date": "2026-01-17", "amount": 9700.0, "direction": "in",
+        {"date": "2026-01-16", "amount": 9700.0, "direction": "in",
          "counterparty": "Cash Deposit", "channel": "cash", "country": ""},
-        {"date": "2026-01-20", "amount": 12000.0, "direction": "in",
+        {"date": "2026-01-17", "amount": 12000.0, "direction": "in",
          "counterparty": "Offshore Holdings Ltd", "channel": "wire",
          "country": "Cayman Islands"},
-        {"date": "2026-01-21", "amount": 11800.0, "direction": "out",
+        {"date": "2026-01-18", "amount": 11800.0, "direction": "out",
          "counterparty": "Offshore Holdings Ltd", "channel": "wire",
          "country": "Cayman Islands"},
-        {"date": "2026-01-26", "amount": 5000.0, "direction": "out",
+        {"date": "2026-01-19", "amount": 8000.0, "direction": "out",
+         "counterparty": "Global Horizon Shipping LLC", "channel": "wire",
+         "country": "Iran"},   # sanctioned beneficiary + blocked-country corridor
+        {"date": "2026-01-20", "amount": 5000.0, "direction": "out",
          "counterparty": "Anonymous Wallet", "channel": "crypto", "country": ""},
     ]
 
@@ -342,6 +346,20 @@ def render_findings(task: dict) -> None:
                     unsafe_allow_html=True)
     with t3:
         st.markdown(sanctions_table(sanc), unsafe_allow_html=True)
+        cp_hits = sanc.get("counterparty_matches", [])
+        if cp_hits:
+            st.markdown('<div class="flag" style="border-color:#e5484d">'
+                        '<b class="bad">BENEFICIARY SANCTIONS HIT</b> — this customer '
+                        'pays a sanctioned party</div>', unsafe_allow_html=True)
+            rows = "".join(
+                f"<tr><td>{m['counterparty']}</td><td>{m['matched_name']}</td>"
+                f"<td>{m['program']}</td>"
+                f"<td style='text-align:right'>{m['match_score']}%</td></tr>"
+                for m in cp_hits)
+            st.markdown(f'<table class="mini"><tr><th>Beneficiary</th>'
+                        f'<th>Matched entity</th><th>Program</th>'
+                        f'<th style="text-align:right">Score</th></tr>{rows}</table>',
+                        unsafe_allow_html=True)
         _kv("Blocked-country exposure",
             "yes" if sanc.get("blocked_country_exposure") else "no",
             good=not sanc.get("blocked_country_exposure"))

@@ -50,6 +50,9 @@ class RiskExecutor(SpecialistExecutor):
         if sanctions.get("match_tier") == "STRONG":
             overall = max(overall, 90)
             escalations.append("confirmed sanctions match → CRITICAL floor")
+        if sanctions.get("counterparty_hit"):
+            overall = max(overall, 90)
+            escalations.append("payment to a sanctioned beneficiary → CRITICAL floor")
         if sanctions.get("blocked_country_exposure"):
             overall = max(overall, 60)
             escalations.append("exposure to a blocked jurisdiction → HIGH floor")
@@ -106,6 +109,12 @@ class RiskExecutor(SpecialistExecutor):
             score = 55
             factors.append({"factor": "possible_sanctions_match", "weight": 55,
                             "detail": f"name similarity {s.get('highest_match_score')}%"})
+        if s.get("counterparty_hit"):
+            cp = (s.get("counterparty_matches") or [{}])[0]
+            score = 100
+            factors.append({"factor": "beneficiary_sanctions_hit", "weight": 100,
+                            "detail": f"pays {cp.get('counterparty')} → "
+                                      f"{cp.get('matched_name')} ({cp.get('program')})"})
         if s.get("blocked_country_exposure"):
             score = max(score, 60)
             factors.append({"factor": "blocked_country", "weight": 60,
@@ -126,6 +135,9 @@ class RiskExecutor(SpecialistExecutor):
         if a.get("rapid_movement"):
             add(25, "rapid_movement",
                 "pass-through via " + ", ".join(a.get("passthrough_counterparties", [])))
+        if a.get("high_velocity"):
+            add(15, "velocity_spike",
+                f"{a.get('velocity_max_7d', 0)} transactions in a 7-day window")
         if a.get("cash_ratio", 0) >= 0.3:
             add(20, "cash_intensive", f"{a.get('cash_ratio', 0):.0%} of volume is cash")
         if a.get("crypto_total", 0) > 0:

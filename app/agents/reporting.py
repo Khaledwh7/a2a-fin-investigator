@@ -97,6 +97,9 @@ class ReportingExecutor(SpecialistExecutor):
 
         conf = risk.get("confidence", {}) or {}
         flagged = aml.get("flagged_transactions", [])
+        cp_hits = sanctions.get("counterparty_matches", [])
+        cp_line = ("YES — " + ", ".join(f"{m['counterparty']} → {m['matched_name']}"
+                                        for m in cp_hits)) if cp_hits else "no"
         human = human or {}
         human_line = ""
         if human:
@@ -165,6 +168,7 @@ class ReportingExecutor(SpecialistExecutor):
             "## Sanctions",
             f"- Match tier: {sanctions.get('match_tier', 'NONE')} "
             f"(highest {sanctions.get('highest_match_score', 0)}%)",
+            f"- Beneficiary (counterparty) hit: {cp_line}",
             f"- Recommended action: {sanctions.get('recommended_action', 'n/a')}",
             f"- Blocked-country exposure: {sanctions.get('blocked_country_exposure')}",
             "",

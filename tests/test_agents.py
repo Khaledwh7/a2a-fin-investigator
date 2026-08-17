@@ -12,7 +12,7 @@ import pytest
 
 from app.a2a.client import A2AClient
 from app.a2a.types import Message, Part, TaskState
-from app.agents.schemas import CustomerProfile
+from app.agents.schemas import CustomerProfile, Transaction
 from app.api.factory import build_app
 from app.config import AgentRole, Settings
 from app.tools.finance import build_default_registry
@@ -134,6 +134,41 @@ async def test_customer_details_drive_the_score(app_and_client):
             "declared_pep"} <= factor_keys
     assert cust["score"] >= 70                       # customer dimension is elevated
     assert risk["risk_band"] in {"MEDIUM", "HIGH", "CRITICAL"}  # not LOW
+    await user.aclose()
+
+
+async def test_counterparty_sanctions_and_velocity(app_and_client):
+    """Beneficiary screening + date-based velocity both drive the outcome."""
+    settings, _app, user = app_and_client
+    # A clean, non-sanctioned customer — the risk comes from WHO they pay and a
+    # burst of activity in one week.
+    ledger = [{"date": f"2026-02-0{i+1}", "amount": 2000.0 + i * 500,
+               "direction": "out", "counterparty": f"Supplier {i}", "channel": "wire",
+               "country": ""} for i in range(7)]
+    ledger.append({"date": "2026-02-06", "amount": 8000.0, "direction": "out",
+                   "counterparty": "Global Horizon Shipping LLC",  # on the sanctions list
+                   "channel": "wire", "country": "Iran"})
+    subject = CustomerProfile(
+        full_name="Clarissa Webb", country="Germany", nationality="Germany",
+        date_of_birth="1986-05-05", id_document={"type": "passport", "number": "DE7"},
+        declared_source_of_funds="Business income",
+        transactions=[Transaction(**t) for t in ledger])
+    task = await _investigate(user, settings, subject)
+
+    sanc = next(a for a in task.artifacts if a.name == "sanctions_findings").first_data()
+    assert sanc["counterparty_hit"] is True
+    assert sanc["counterparty_matches"][0]["counterparty"] == "Global Horizon Shipping LLC"
+
+    aml = next(a for a in task.artifacts if a.name == "aml_findings").first_data()
+    assert aml["velocity_max_7d"] >= 6            # date-based velocity window
+    assert aml["high_velocity"] is True
+
+    fraud = next(a for a in task.artifacts if a.name == "fraud_findings").first_data()
+    assert any(t["type"] == "velocity_spike" for t in fraud["typologies"])
+
+    risk = next(a for a in task.artifacts if a.name == "risk_assessment").first_data()
+    assert risk["risk_band"] == "CRITICAL"        # paying a sanctioned party
+    assert any("beneficiary" in e for e in risk["escalations"])
     await user.aclose()
 
 

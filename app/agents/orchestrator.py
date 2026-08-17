@@ -47,7 +47,8 @@ def _requires_review(risk: dict, sanctions: dict) -> bool:
     """The 'right case' for a human: any high-stakes, regulated outcome."""
     return (risk.get("risk_band") in {"HIGH", "CRITICAL"}
             or bool(risk.get("sar_recommended"))
-            or bool(sanctions.get("hit")))
+            or bool(sanctions.get("hit"))
+            or bool(sanctions.get("counterparty_hit")))
 
 
 class OrchestratorExecutor(AgentExecutor):

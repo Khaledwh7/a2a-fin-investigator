@@ -200,7 +200,7 @@ def _synthesize_ledger(profile: dict[str, Any]) -> list[dict[str, Any]]:
 
     def add(amount: float, direction: str, cp: str, channel: str = "wire",
             country: str = "") -> None:
-        txns.append({"amount": round(amount, 2), "direction": direction,
+        txns.append({"date": "", "amount": round(amount, 2), "direction": direction,
                      "counterparty": cp, "channel": channel, "country": country})
 
     for _ in range(rng.randint(3, 5)):                       # salary in
@@ -233,6 +233,7 @@ def _coerce_ledger(raw: list[Any]) -> list[dict[str, Any]]:
         except (TypeError, ValueError):
             amt = 0.0
         out.append({
+            "date": str(t.get("date") or "").strip(),
             "amount": round(amt, 2),
             "direction": "out" if str(t.get("direction", "in")).lower() == "out" else "in",
             "counterparty": str(t.get("counterparty") or "").strip(),
@@ -240,6 +241,33 @@ def _coerce_ledger(raw: list[Any]) -> list[dict[str, Any]]:
             "country": str(t.get("country") or "").strip(),
         })
     return out
+
+
+def _velocity_7d(ledger: list[dict[str, Any]]) -> dict[str, Any]:
+    """Real time-window velocity from transaction dates.
+
+    Returns the busiest 7-day window (count) and the ledger's date span. Only
+    meaningful when the analyst supplies dated transactions; falls back to zero
+    when dates are missing (e.g. the synthesized ledger).
+    """
+    import datetime as _dt
+
+    dates: list[_dt.date] = []
+    for t in ledger:
+        raw = t.get("date") or ""
+        try:
+            dates.append(_dt.date.fromisoformat(raw[:10]))
+        except (ValueError, TypeError):
+            continue
+    if len(dates) < 3:
+        return {"max_in_7d": 0, "span_days": 0, "dated": len(dates)}
+    dates.sort()
+    max_in_7d = max(
+        sum(1 for d in dates if start <= d <= start + _dt.timedelta(days=7))
+        for start in dates
+    )
+    return {"max_in_7d": max_in_7d, "span_days": (dates[-1] - dates[0]).days,
+            "dated": len(dates)}
 
 
 def analyze_transactions(profile: dict[str, Any]) -> dict[str, Any]:
@@ -296,6 +324,8 @@ def analyze_transactions(profile: dict[str, Any]) -> dict[str, Any]:
                                   if "high_risk_country" in t["flags"] and t["country"]})
     cash_ratio = round(cash_total / total, 3) if total else 0.0
     over_expected = bool(expected_monthly and total_in > 3 * expected_monthly)
+    velocity = _velocity_7d(enriched)
+    high_velocity = velocity["max_in_7d"] >= 8       # ≥8 transactions in a 7-day window
     flagged = [t for t in enriched if t["flags"]]
 
     patterns: list[str] = []
@@ -314,9 +344,12 @@ def analyze_transactions(profile: dict[str, Any]) -> dict[str, Any]:
     if over_expected:
         patterns.append(f"inflow ${total_in:,.0f} far exceeds expected "
                         f"${expected_monthly:,.0f}/mo")
+    if high_velocity:
+        patterns.append(f"velocity spike: {velocity['max_in_7d']} transactions within a "
+                        f"7-day window")
 
     signals = sum([structuring_detected, rapid_movement, cash_ratio >= 0.3,
-                   crypto_total > 0, bool(high_risk_hits), over_expected])
+                   crypto_total > 0, bool(high_risk_hits), over_expected, high_velocity])
     return {
         "source": source,
         "transaction_count": len(enriched),
@@ -334,6 +367,8 @@ def analyze_transactions(profile: dict[str, Any]) -> dict[str, Any]:
         "high_risk_counterparties": high_risk_hits,
         "high_risk_countries": high_risk_countries,
         "over_expected_volume": over_expected,
+        "high_velocity": high_velocity,
+        "velocity_max_7d": velocity["max_in_7d"],
         "suspicious_patterns": patterns,
         "aml_signal_count": signals,
         "sar_candidate": signals >= 2,
@@ -421,6 +456,13 @@ def detect_fraud(profile: dict[str, Any]) -> dict[str, Any]:
                            "detail": f"${largest:,.0f} on a {account_age}-day-old "
                                      f"account"})
 
+    # 8) Velocity spike — a burst of transactions in a short window (ATO / mule)
+    velocity = _velocity_7d(ledger)
+    if velocity["max_in_7d"] >= 6:
+        typologies.append({"type": "velocity_spike", "weight": 20,
+                           "detail": f"{velocity['max_in_7d']} transactions within a "
+                                     f"7-day window"})
+
     fraud_score = min(100, sum(t["weight"] for t in typologies))
     band = _band(fraud_score)
     return {
@@ -437,21 +479,29 @@ def detect_fraud(profile: dict[str, Any]) -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 # Sanctions screening — fuzzy name match + blocked-country check
 # --------------------------------------------------------------------------- #
-def screen_sanctions(full_name: str, country: str = "") -> dict[str, Any]:
-    matches: list[dict[str, Any]] = []
+def _match_entries(name: str) -> list[dict[str, Any]]:
+    out = []
     for entry in SANCTIONS_ENTRIES:
-        score = name_match_score(full_name, entry["name"])
+        score = name_match_score(name, entry["name"])
         if score >= 70:
-            matches.append({
-                "matched_name": entry["name"],
-                "list_name": entry["list_name"],
-                "program": entry["program"],
-                "entity_type": entry.get("type", "individual"),
-                "match_score": score,
-            })
-    matches.sort(key=lambda m: m["match_score"], reverse=True)
-    highest = matches[0]["match_score"] if matches else 0
+            out.append({"matched_name": entry["name"], "list_name": entry["list_name"],
+                        "program": entry["program"],
+                        "entity_type": entry.get("type", "individual"),
+                        "match_score": score})
+    out.sort(key=lambda m: m["match_score"], reverse=True)
+    return out
 
+
+def screen_sanctions(full_name: str, country: str = "",
+                     counterparties: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    """Screen the customer AND their transaction counterparties (beneficiaries).
+
+    Paying a sanctioned party is as serious as being one, so we fuzzy-match every
+    distinct counterparty name against the list too, and flag blocked-country
+    counterparties.
+    """
+    matches = _match_entries(full_name)
+    highest = matches[0]["match_score"] if matches else 0
     if highest >= 85:
         tier, action = "STRONG", ("Block and escalate; confirm identity against the "
                                   "listed entity")
@@ -460,6 +510,24 @@ def screen_sanctions(full_name: str, country: str = "") -> dict[str, Any]:
                                     "auto-clear threshold")
     else:
         tier, action = "NONE", "No sanctions match"
+
+    # --- counterparty (beneficiary) screening -------------------------------
+    cp_matches: list[dict[str, Any]] = []
+    cp_blocked: list[str] = []
+    seen: set[str] = set()
+    for cp in counterparties or []:
+        cp_name = str(cp.get("name") or "").strip()
+        cp_country = str(cp.get("country") or "").strip()
+        key = cp_name.lower()
+        if cp_name and key not in seen:
+            seen.add(key)
+            m = _match_entries(cp_name)
+            if m and m[0]["match_score"] >= 85:
+                cp_matches.append({"counterparty": cp_name, **m[0]})
+        if cp_country and country_risk_tier(cp_country) == "BLOCKED":
+            cp_blocked.append(cp_country)
+    counterparty_hit = bool(cp_matches)
+
     return {
         "screened_name": full_name,
         "matches": matches,
@@ -468,7 +536,11 @@ def screen_sanctions(full_name: str, country: str = "") -> dict[str, Any]:
         "recommended_action": action,
         "highest_match_score": highest,
         "country_risk_tier": country_risk_tier(country),
-        "blocked_country_exposure": country_risk_tier(country) == "BLOCKED",
+        "blocked_country_exposure": country_risk_tier(country) == "BLOCKED"
+                                    or bool(cp_blocked),
+        "counterparty_matches": cp_matches,
+        "counterparty_hit": counterparty_hit,
+        "counterparty_blocked_countries": sorted(set(cp_blocked)),
     }
 
 
