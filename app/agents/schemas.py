@@ -9,7 +9,44 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+# --- Numeral normalization -------------------------------------------------
+# Map Arabic-Indic (U+0660–0669) and Extended Arabic-Indic / Persian
+# (U+06F0–06F9) digits — plus the Arabic decimal (٫) and thousands (٬)
+# separators — to ASCII. A salary entered as ٥٠٬٠٠٠ is then stored and shown
+# as 50,000 rather than in Eastern numerals.
+_DIGIT_MAP = str.maketrans(
+    "٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹٫٬",
+    "01234567890123456789.,",
+)
+
+
+def normalize_digits(value: Any) -> Any:
+    """Convert Arabic-Indic / Persian numerals in a string to ASCII digits.
+
+    Non-strings pass through unchanged.
+    """
+    return value.translate(_DIGIT_MAP) if isinstance(value, str) else value
+
+
+def _deep_normalize(value: Any) -> Any:
+    """Apply :func:`normalize_digits` to every string in a nested structure."""
+    if isinstance(value, str):
+        return normalize_digits(value)
+    if isinstance(value, list):
+        return [_deep_normalize(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _deep_normalize(v) for k, v in value.items()}
+    return value
+
+
+def _to_number(value: Any) -> Any:
+    """Coerce a possibly Arabic / comma-grouped numeric string to a number."""
+    if isinstance(value, str):
+        s = normalize_digits(value).replace(",", "").replace(" ", "")
+        return s.replace("$", "").strip() or 0
+    return value
 
 
 class IdDocument(BaseModel):
@@ -28,6 +65,11 @@ class Transaction(BaseModel):
     counterparty: str = ""
     channel: Literal["wire", "cash", "card", "crypto", "transfer", "cheque"] = "wire"
     country: str = ""  # counterparty jurisdiction (optional)
+
+    @field_validator("amount", mode="before")
+    @classmethod
+    def _coerce_amount(cls, v: Any) -> Any:
+        return _to_number(v)
 
 
 class CustomerProfile(BaseModel):
@@ -60,6 +102,17 @@ class CustomerProfile(BaseModel):
     # instead of synthesising one — so the numbers come from real input.
     transactions: list[Transaction] = Field(default_factory=list)
     notes: str = ""  # free-text scenario / observed behaviour
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_numerals(cls, data: Any) -> Any:
+        """Normalize Arabic-Indic numerals across every inbound field."""
+        return _deep_normalize(data) if isinstance(data, dict) else data
+
+    @field_validator("annual_income", "expected_monthly_volume", mode="before")
+    @classmethod
+    def _coerce_amounts(cls, v: Any) -> Any:
+        return _to_number(v)
 
     @classmethod
     def demo(cls) -> CustomerProfile:

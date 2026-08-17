@@ -9,6 +9,7 @@ otherwise a deterministic template does — the report is always produced.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 from app.a2a.executor import EventQueue, RequestContext
@@ -95,84 +96,113 @@ class ReportingExecutor(SpecialistExecutor):
         def flags(items: list[str]) -> str:
             return "\n".join(f"  - {i}" for i in items) if items else "  - none"
 
+        def yn(value: Any) -> str:
+            return "Yes" if value else "No"
+
+        def usd(value: Any) -> str:
+            return f"USD {float(value or 0):,.0f}"
+
         conf = risk.get("confidence", {}) or {}
+        band = risk.get("risk_band", "LOW")
+        score = risk.get("risk_score", 0)
         flagged = aml.get("flagged_transactions", [])
         cp_hits = sanctions.get("counterparty_matches", [])
         cp_line = ("YES — " + ", ".join(f"{m['counterparty']} → {m['matched_name']}"
                                         for m in cp_hits)) if cp_hits else "no"
+        report_date = datetime.now(UTC).strftime("%Y-%m-%d")
+
         human = human or {}
         human_line = ""
         if human:
             action = str(human.get("action", "")).upper()
             who = human.get("decided_by", "analyst")
             note = human.get("note") or "(no note)"
-            human_line = (f"**Analyst decision:** {action} by {who} — {note}  \n")
+            human_line = f"**Analyst decision:** {action} by {who} — {note}  "
+
         lines = [
             f"# Investigation Report - {profile.full_name}",
             "",
+            f"**Report date:** {report_date} (UTC)  ",
+            f"**Risk classification:** {band} ({score}/100)  ",
+            f"**Recommended decision:** {risk.get('decision', 'n/a')}  ",
+            "**Suspicious Activity Report (SAR):** "
+            f"{'Recommended' if risk.get('sar_recommended') else 'Not recommended'}  ",
+            f"**Assessment confidence:** {conf.get('value', 0)}/100 "
+            f"({conf.get('label', 'n/a')})  ",
             human_line,
-            f"**Decision:** {risk.get('decision', 'n/a')}  ",
-            f"**Risk score:** {risk.get('risk_score', 0)}/100  "
-            f"(**{risk.get('risk_band', 'LOW')}**)  ",
-            f"**Confidence:** {conf.get('value', 0)}/100 ({conf.get('label', 'n/a')})  ",
-            f"**SAR recommended:** {'YES' if risk.get('sar_recommended') else 'no'}",
+            "",
+            "---",
             "",
             "## Summary",
+            "",
             narrative,
             "",
-            "## Recommended actions",
+            "## Recommended Actions",
+            "",
             flags(risk.get("recommended_actions", [])),
             "",
-            "## Customer",
-            f"- Nationality / residence: {profile.nationality or 'n/a'} / "
+            "## Customer Profile",
+            "",
+            f"- **Nationality / residence:** {profile.nationality or 'n/a'} / "
             f"{profile.country or 'n/a'}"
             + (f" · tax residency {profile.tax_residency}" if profile.tax_residency else ""),
-            f"- Occupation / industry: {profile.occupation or 'n/a'}"
+            f"- **Occupation / industry:** {profile.occupation or 'n/a'}"
             + (f" · {profile.industry}" if profile.industry else ""),
-            f"- Employment: {profile.employment_status or 'n/a'}"
+            f"- **Employment:** {profile.employment_status or 'n/a'}"
             + (f" at {profile.employer}" if profile.employer else "")
-            + (f" · income ${profile.annual_income:,.0f}/yr"
+            + (f" · income {usd(profile.annual_income)}/yr"
                if profile.annual_income else ""),
-            f"- Source of funds / wealth: {profile.declared_source_of_funds or 'n/a'}"
+            f"- **Source of funds / wealth:** {profile.declared_source_of_funds or 'n/a'}"
             + (f" / {profile.source_of_wealth}" if profile.source_of_wealth else ""),
-            f"- Account purpose: {profile.account_purpose or 'n/a'}  ·  "
+            f"- **Account purpose:** {profile.account_purpose or 'n/a'}  ·  "
             f"Onboarding: {profile.onboarding_channel}"
             + ("  ·  self-declared PEP" if profile.pep_declared else ""),
             "",
-            "## KYC",
-            f"- Identity verified: {kyc.get('identity_verified')}",
-            f"- Data quality: {kyc.get('data_quality_score')}/100",
-            f"- Missing/invalid fields: {', '.join(kyc.get('missing_fields', [])) or 'none'}",
-            f"- PEP: {kyc.get('is_pep')}",
-            "- Flags:",
+            "## KYC — Identity & Due Diligence",
+            "",
+            f"- **Identity verified:** {yn(kyc.get('identity_verified'))}",
+            f"- **Data quality score:** {kyc.get('data_quality_score', 0)}/100",
+            "- **Missing / invalid fields:** "
+            f"{', '.join(kyc.get('missing_fields', [])) or 'none'}",
+            f"- **Politically exposed person (PEP):** {yn(kyc.get('is_pep'))}",
+            "- **Risk flags:**",
             flags(kyc.get("risk_flags", [])),
             "",
-            "## AML",
-            f"- Transactions: {aml.get('transaction_count')} "
-            f"(${aml.get('total_volume', 0):,.0f}; largest "
-            f"${aml.get('largest_transaction', 0):,.0f})",
-            f"- Structuring detected: {aml.get('structuring_detected')} "
-            f"({aml.get('near_threshold_count', 0)} near-threshold)",
-            f"- Rapid movement: {aml.get('rapid_movement')}",
-            "- Patterns:",
-            flags(aml.get("suspicious_patterns", [])),
-            f"- Flagged transactions: {len(flagged)} of {aml.get('transaction_count', 0)}",
+            "## AML — Transaction Monitoring",
             "",
-            "## Fraud",
-            f"- Fraud score: {fraud.get('fraud_score', 0)}/100 "
-            f"({fraud.get('fraud_band', 'LOW')})  ·  "
-            f"Alert: {'YES' if fraud.get('fraud_alert') else 'no'}",
-            "- Typologies:",
+            f"- **Transactions reviewed:** {aml.get('transaction_count', 0)} "
+            f"(total {usd(aml.get('total_volume'))}; "
+            f"largest {usd(aml.get('largest_transaction'))})",
+            "- **Structuring indicators:** "
+            f"{'Detected' if aml.get('structuring_detected') else 'Not detected'} "
+            f"({aml.get('near_threshold_count', 0)} deposit(s) near the reporting "
+            "threshold)",
+            "- **Rapid movement of funds:** "
+            f"{'Detected' if aml.get('rapid_movement') else 'Not detected'}",
+            "- **Suspicious patterns:**",
+            flags(aml.get("suspicious_patterns", [])),
+            f"- **Transactions flagged:** {len(flagged)} of "
+            f"{aml.get('transaction_count', 0)}",
+            "",
+            "## Fraud — Typology Screening",
+            "",
+            f"- **Fraud score:** {fraud.get('fraud_score', 0)}/100 "
+            f"({fraud.get('fraud_band', 'LOW')})",
+            f"- **Fraud alert:** {yn(fraud.get('fraud_alert'))}",
+            "- **Typologies:**",
             flags(fraud.get("summary_patterns", [])),
             "",
-            "## Sanctions",
-            f"- Match tier: {sanctions.get('match_tier', 'NONE')} "
-            f"(highest {sanctions.get('highest_match_score', 0)}%)",
-            f"- Beneficiary (counterparty) hit: {cp_line}",
-            f"- Recommended action: {sanctions.get('recommended_action', 'n/a')}",
-            f"- Blocked-country exposure: {sanctions.get('blocked_country_exposure')}",
+            "## Sanctions — Watchlist Screening",
             "",
-            "## Risk factors (score breakdown)",
+            f"- Match tier: {sanctions.get('match_tier', 'NONE')} "
+            f"(highest match {sanctions.get('highest_match_score', 0)}%)",
+            f"- **Beneficiary (counterparty) hit:** {cp_line}",
+            f"- **Recommended action:** {sanctions.get('recommended_action', 'n/a')}",
+            "- **Blocked-country exposure:** "
+            f"{yn(sanctions.get('blocked_country_exposure'))}",
+            "",
+            "## Risk Factors — Score Breakdown",
+            "",
             flags([f"{f['factor']} (+{f['weight']}): {f['detail']}"
                    for f in risk.get("contributing_factors", [])]),
         ]

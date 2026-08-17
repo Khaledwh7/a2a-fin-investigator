@@ -470,7 +470,9 @@ def render_result(result: dict) -> None:
     c1, c2 = st.columns([3, 2])
     with c1:
         st.markdown("##### Investigation report")
-        st.markdown(_text(task, "investigation_report") or "_no report_")
+        report_md = _text(task, "investigation_report") or "_no report_"
+        # Streamlit renders $…$ as LaTeX math; escape so currency shows literally.
+        st.markdown(report_md.replace("$", "\\$"))
         st.download_button("⬇ Download report (.md)",
                            _text(task, "investigation_report"),
                            file_name=f"report_{task.get('id','case')}.md")
