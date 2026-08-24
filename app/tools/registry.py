@@ -5,8 +5,8 @@ enforces *which role may call which tool*. That's "secure tool calling" and
 "least privilege" at the tool boundary: the Risk agent literally cannot invoke
 the sanctions-screening tool, because its role isn't on the allow-list.
 
-The registry is introduced here (Phase 3) because it's part of the tool layer,
-but it is also a security control the Phase 5 write-up points back to.
+The registry lives in the tool layer, but it is also a security control: it is
+where per-agent tool permissions are enforced.
 """
 
 from __future__ import annotations

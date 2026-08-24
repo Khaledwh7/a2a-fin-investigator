@@ -12,12 +12,12 @@ from dataclasses import dataclass, field
 
 import httpx
 
-from app.a2a.client import A2AClient
 from app.a2a.types import Message, Part, Task
 from app.agents.schemas import CustomerProfile
-from app.api.factory import build_app
+from app.api.factory import build_app, default_client
 from app.config import AgentRole, Settings
 from app.evaluation.dataset import SCENARIOS, Scenario
+from app.evaluation.detection import DetectionMatrix, observed_detections
 from app.evaluation.evaluators import EVALUATORS, DimensionScore
 from app.observability.trace import InvestigationTrace
 
@@ -37,6 +37,8 @@ class ScenarioResult:
 @dataclass
 class Scorecard:
     results: list[ScenarioResult] = field(default_factory=list)
+    #: suite-level confusion matrix per detector (precision / recall / F1)
+    detection: DetectionMatrix = field(default_factory=DetectionMatrix)
 
     @property
     def pass_rate(self) -> float:
@@ -56,6 +58,7 @@ class Scorecard:
         return {
             "pass_rate": self.pass_rate,
             "by_dimension": self.by_dimension,
+            "detection": self.detection.to_dict(),
             "scenarios": [
                 {"id": r.scenario_id, "passed": r.passed,
                  "overall_score": r.overall_score,
@@ -75,8 +78,16 @@ class EvalHarness:
         self.settings = settings or Settings(require_human_review=False)
         self.app = build_app(self.settings)
         self._transport = httpx.ASGITransport(app=self.app)
-        self.app.state.orchestrator.set_client(
-            A2AClient(transport=self._transport, max_attempts=1))
+        # The orchestrator keeps its real credentials and card verification —
+        # only the socket is swapped — so the suite scores the configuration the
+        # app actually ships with.
+        client = default_client(
+            self.settings, token_service=self.app.state.token_service,
+            secret=self.settings.jwt_secret.get_secret_value(),
+            transport=self._transport)
+        client.set_loopback(self._transport)
+        self.app.state.orchestrator.set_client(client)
+        self.app.state.a2a_client = client
 
     async def run(self, profile: CustomerProfile) -> tuple[Task, InvestigationTrace]:
         agent = self.app.state.agents[AgentRole.ORCHESTRATOR]
@@ -103,6 +114,8 @@ async def evaluate(scenarios: list[Scenario] | None = None,
             overall = round(sum(s.score for s in scores) / len(scores), 3)
             passed = all(s.passed for s in scores if s.dimension in _HARD_DIMS)
             card.results.append(ScenarioResult(sc.id, scores, overall, passed))
+            card.detection.add(sc.id, set(sc.expect.detections),
+                               observed_detections(task))
     finally:
         if owns_harness:
             await harness.aclose()
@@ -123,5 +136,6 @@ def format_scorecard(card: Scorecard) -> str:
     dims = card.by_dimension
     lines.append("  Per-dimension avg: "
                  + "  ".join(f"{d}={v:.2f}" for d, v in dims.items()))
+    lines += card.detection.render()
     lines.append("=" * 76)
     return "\n".join(lines)

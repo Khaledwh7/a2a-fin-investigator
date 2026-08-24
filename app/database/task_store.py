@@ -1,4 +1,4 @@
-"""SQLite-backed TaskStore — the persistent implementation of the Phase 2 interface.
+"""SQLite-backed TaskStore — the persistent implementation of the TaskStore interface.
 
 It satisfies the exact same ``TaskStore`` protocol as ``InMemoryTaskStore``, so
 agents and the server don't change at all — persistence is a drop-in.
@@ -6,7 +6,7 @@ agents and the server don't change at all — persistence is a drop-in.
 Two things worth noting for an interviewer:
 
   * **It returns copies, not shared objects.** ``get()`` deserializes a fresh
-    Task from JSON. That's why the Phase 3 "single-writer" fix matters: if the
+    Task from JSON. That is why the "single-writer" rule matters: if the
     emitter had kept mutating the caller's Task, those mutations would silently
     vanish here. The server's persistence loop is the one writer.
   * **Per-agent scoping.** Each store is bound to one ``agent_role`` and only
@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import asyncio
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.a2a.task_store import assert_transition
@@ -87,6 +87,16 @@ class SqlTaskStore:
         async with self._sf() as s:
             rows = (await s.execute(stmt)).scalars().all()
         return [Task.model_validate(r.task_json) for r in rows]
+
+    async def delete_context(self, context_id: str) -> int:
+        """Drop this role's tasks for one investigation. Returns the row count."""
+        stmt = (delete(TaskRecord)
+                .where(TaskRecord.agent_role == self.role)
+                .where(TaskRecord.context_id == context_id))
+        async with self._lock, self._sf() as s:
+            result = await s.execute(stmt)
+            await s.commit()
+            return result.rowcount or 0
 
     # -- helpers ----------------------------------------------------------
     async def _require(self, s: AsyncSession, task_id: str) -> TaskRecord:

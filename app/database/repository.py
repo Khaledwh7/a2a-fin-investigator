@@ -67,9 +67,36 @@ class InvestigationRepository:
 
     @staticmethod
     def _report_summary(task_json: dict[str, Any]) -> dict[str, Any]:
-        for artifact in task_json.get("artifacts", []):
-            if artifact.get("name") == "investigation_report":
-                for part in artifact.get("parts", []):
-                    if isinstance(part.get("data"), dict):
-                        return part["data"]
-        return {}
+        """Summary fields for the history row.
+
+        Prefers the final report, but falls back to the risk assessment and the
+        request history. A case paused at INPUT_REQUIRED has no report yet — and
+        those are precisely the ones an analyst has to come back and action, so
+        they must not list as blank rows.
+        """
+        by_name = {a.get("name"): a for a in task_json.get("artifacts", [])}
+
+        def data_of(name: str) -> dict[str, Any]:
+            for part in (by_name.get(name) or {}).get("parts", []):
+                if isinstance(part.get("data"), dict):
+                    return part["data"]
+            return {}
+
+        report = data_of("investigation_report")
+        if report:
+            return report
+        risk = data_of("risk_assessment")
+        return {"customer": _customer_name(task_json),
+                "risk_score": risk.get("risk_score"),
+                "risk_band": risk.get("risk_band"),
+                "sar_recommended": risk.get("sar_recommended")}
+
+
+def _customer_name(task_json: dict[str, Any]) -> str | None:
+    """Recover the subject's name from the request that started the task."""
+    for message in task_json.get("history", []):
+        for part in message.get("parts", []):
+            data = part.get("data")
+            if isinstance(data, dict) and isinstance(data.get("profile"), dict):
+                return data["profile"].get("full_name")
+    return None

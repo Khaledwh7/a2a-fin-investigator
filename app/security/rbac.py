@@ -13,7 +13,7 @@ needs (least privilege). Two things fall out of this design:
 
 This is the *transport-level* authorization (who may call whom). Tool-level
 least privilege (which agent may call which tool) is enforced separately by the
-ToolRegistry from Phase 3.
+ToolRegistry.
 """
 
 from __future__ import annotations

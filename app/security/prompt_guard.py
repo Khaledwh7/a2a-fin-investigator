@@ -26,7 +26,9 @@ _PATTERNS: list[tuple[str, re.Pattern[str]]] = [
                                        r"(instructions|prompts?)", re.I)),
     ("disregard", re.compile(r"disregard\s+(the\s+)?(above|previous|system)", re.I)),
     ("system_prompt", re.compile(r"system\s+prompt|developer\s+message", re.I)),
-    ("role_override", re.compile(r"you\s+are\s+now|act\s+as\s+(an?\s+)?", re.I)),
+    ("role_override", re.compile(r"you\s+are\s+now\b|act\s+as\s+(an?\s+)?"
+                                 r"(ai|assistant|model|chatbot|bot|system|admin|"
+                                 r"administrator|developer|dan|jailbroken)\b", re.I)),
     ("exfiltrate", re.compile(r"reveal|exfiltrate|print\s+your\s+(instructions|prompt)", re.I)),
     ("override_risk", re.compile(r"(mark|set|classify)\s+.*\b(low|no)\s+risk", re.I)),
     ("jailbreak", re.compile(r"jailbreak|DAN\s+mode|ignore\s+your\s+guidelines", re.I)),

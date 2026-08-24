@@ -12,7 +12,7 @@ containers, each agent is at a host root and the path becomes the canonical
 one — no code change, just different URLs in the peer registry.
 
 This module only *builds* generic cards. The six agents supply their own
-name/description/skills in Phase 3.
+name/description/skills.
 """
 
 from __future__ import annotations

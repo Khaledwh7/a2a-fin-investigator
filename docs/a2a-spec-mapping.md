@@ -21,7 +21,7 @@ the normative SCREAMING_SNAKE strings. Implemented in `app/a2a/types.py`.
 | **Artifact** | `artifactId`, `name`, `description`, `parts`, `metadata` | `extensions` |
 | **TaskStatusUpdateEvent** | `taskId`, `contextId`, `status`, `metadata` | — |
 | **TaskArtifactUpdateEvent** | `taskId`, `contextId`, `artifact`, `append`, `lastChunk`, `metadata` | — |
-| **AgentCard** | `name`, `description`, `version`, `supportedInterfaces`, `provider`, `capabilities`, `defaultInputModes`, `defaultOutputModes`, `skills`, `signatures`, `iconUrl` | `securitySchemes`/`securityRequirements` are added in Phase 5 |
+| **AgentCard** | `name`, `description`, `version`, `supportedInterfaces`, `provider`, `capabilities`, `defaultInputModes`, `defaultOutputModes`, `skills`, `signatures`, `iconUrl`, `securitySchemes`, `security` | — |
 | **AgentInterface** | `url`, `protocolBinding`, `protocolVersion` | `tenant` (no multi-tenancy) |
 | **AgentCapabilities** | `streaming`, `pushNotifications`, `extendedAgentCard` | — |
 | **AgentSkill** | `id`, `name`, `description`, `tags`, `examples`, `inputModes`, `outputModes` | `securityRequirements` |

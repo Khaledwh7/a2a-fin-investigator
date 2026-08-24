@@ -11,9 +11,47 @@ investigation narrative. This module isolates that dependency so:
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
+from typing import Any
 
 from app.config import get_settings
+
+# One client per process. The Anthropic SDK holds an HTTP connection pool, so
+# building a fresh client per report would leak a pool per investigation.
+_client: Any = None
+_client_lock = asyncio.Lock()
+
+
+async def _get_client() -> Any:
+    global _client
+    if _client is None:
+        async with _client_lock:
+            if _client is None:
+                from anthropic import AsyncAnthropic
+                settings = get_settings()
+                _client = AsyncAnthropic(
+                    api_key=settings.anthropic_api_key.get_secret_value())
+    return _client
+
+
+def set_client(client: Any) -> None:
+    """Inject a preconfigured client.
+
+    The seam that makes this layer testable without the ``anthropic`` package
+    installed — and the hook for supplying a client with custom transport or
+    credentials in a deployment that needs one.
+    """
+    global _client
+    _client = client
+
+
+async def aclose() -> None:
+    """Release the shared client (called from the app's lifespan shutdown)."""
+    global _client
+    if _client is not None:
+        await _client.close()
+        _client = None
 
 
 @dataclass
@@ -36,17 +74,18 @@ async def narrate(prompt: str, system: str) -> LLMResult | None:
         return None
 
     try:
-        from anthropic import AsyncAnthropic  # lazy import
-    except ImportError:
-        return None
-
-    try:
-        client = AsyncAnthropic(api_key=settings.anthropic_api_key.get_secret_value())
-        # Adaptive thinking + effort is the current recommended pattern for
-        # Claude Opus 5 / Sonnet 5.
+        # A missing `anthropic` package surfaces here as an ImportError from
+        # _get_client and degrades to the template like any other failure —
+        # there is no separate availability check to keep in sync.
+        client = await _get_client()
+        # Adaptive thinking is on by default on Claude Opus 5; `effort` is the
+        # supported way to trade depth against cost and lives inside
+        # `output_config`. `max_tokens` caps thinking AND response text together,
+        # so the narrative budget below has to cover both.
         resp = await client.messages.create(
             model=settings.llm_model,
             max_tokens=settings.llm_max_tokens,
+            output_config={"effort": settings.llm_effort},
             system=system,
             messages=[{"role": "user", "content": prompt}],
         )

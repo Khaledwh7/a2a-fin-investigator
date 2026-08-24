@@ -1,4 +1,4 @@
-"""Phase 2 — protocol conformance and end-to-end plumbing.
+"""Protocol conformance and end-to-end plumbing.
 
 These tests pin the two things most tutorials get wrong about A2A v1.0:
 the camelCase wire format and the SCREAMING_SNAKE enum values. They also drive

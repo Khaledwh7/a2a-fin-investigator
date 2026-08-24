@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import functools
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -61,15 +62,19 @@ class Settings(BaseSettings):
     risk_url: str = "http://localhost:8000/a2a/risk"
     reporting_url: str = "http://localhost:8000/a2a/reporting"
 
-    # --- auth (used from Phase 5) -----------------------------------------
+    # --- auth ---------------------------------------------------------------
     # Dev default is ≥32 bytes (RFC 7518 minimum for HS256). Override in prod.
     jwt_secret: SecretStr = SecretStr("dev-only-change-me-32byte-minimum-secret!")
     jwt_issuer: str = "a2a-fin-investigator"
     jwt_algorithm: str = "HS256"
     jwt_key_id: str = "card-key-1"
     access_token_ttl_seconds: int = 900
-    require_agent_auth: bool = False  # flipped on in Phase 5
-    require_signed_agent_cards: bool = False
+    # Secure by default. Agent-to-agent calls carry a short-lived JWT and every
+    # Agent Card is signed, so the security the README advertises is the security
+    # the app actually runs — and the test suite exercises that configuration
+    # rather than a laxer one.
+    require_agent_auth: bool = True
+    require_signed_agent_cards: bool = True
 
     # --- human-in-the-loop ------------------------------------------------
     # When on, high-stakes outcomes (HIGH/CRITICAL, SAR, or a sanctions hit)
@@ -104,7 +109,9 @@ class Settings(BaseSettings):
     llm_enabled: bool = False
     anthropic_api_key: SecretStr | None = None
     llm_model: str = "claude-opus-5"
-    llm_effort: str = "medium"
+    # Depth/cost dial for the narrative. Typed so a bad value fails at startup
+    # rather than as a 400 in the middle of an investigation.
+    llm_effort: Literal["low", "medium", "high", "xhigh", "max"] = "medium"
     llm_max_tokens: int = 4096
 
     # --- TLS (outbound peer verification) ---------------------------------

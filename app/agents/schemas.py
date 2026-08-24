@@ -2,7 +2,7 @@
 
 A2A carries opaque content; we choose to put a validated JSON object in a
 ``data`` Part. Validating the incoming customer profile here is our first line
-of input validation (hardened further in Phase 5).
+of input validation.
 """
 
 from __future__ import annotations
@@ -66,10 +66,28 @@ class Transaction(BaseModel):
     channel: Literal["wire", "cash", "card", "crypto", "transfer", "cheque"] = "wire"
     country: str = ""  # counterparty jurisdiction (optional)
 
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_nulls(cls, data: Any) -> Any:
+        """Let an omitted-but-present field fall back to its default.
+
+        Spreadsheet-shaped sources (a UI grid, a CSV import) send every column
+        for every row, so a cell the analyst left blank arrives as null. Without
+        this, one blank ``direction`` rejects the entire profile.
+        """
+        if isinstance(data, dict):
+            return {k: v for k, v in data.items() if v is not None}
+        return data
+
     @field_validator("amount", mode="before")
     @classmethod
     def _coerce_amount(cls, v: Any) -> Any:
         return _to_number(v)
+
+    @field_validator("direction", "channel", mode="before")
+    @classmethod
+    def _normalize_enum(cls, v: Any) -> Any:
+        return v.strip().lower() if isinstance(v, str) else v
 
 
 class CustomerProfile(BaseModel):
@@ -98,8 +116,8 @@ class CustomerProfile(BaseModel):
     tax_residency: str = ""
     # --- documents ---
     id_document: IdDocument = Field(default_factory=IdDocument)
-    # Real, analyst-provided ledger. When present, the AML agent analyses THIS
-    # instead of synthesising one — so the numbers come from real input.
+    # The analyst-provided ledger — the only transaction evidence there is. With
+    # none, AML and Fraud report "not assessed"; nothing is ever synthesised.
     transactions: list[Transaction] = Field(default_factory=list)
     notes: str = ""  # free-text scenario / observed behaviour
 
@@ -116,6 +134,12 @@ class CustomerProfile(BaseModel):
 
     @classmethod
     def demo(cls) -> CustomerProfile:
+        """A worked case, ledger included.
+
+        The transactions are the point: the structuring and pass-through findings
+        this profile produces are computed from these rows, so every number in the
+        demo traces back to something an analyst can look at.
+        """
         return cls(
             full_name="Viktor Petrov",
             date_of_birth="1975-03-11",
@@ -125,8 +149,37 @@ class CustomerProfile(BaseModel):
             expected_monthly_volume=25_000,
             account_age_days=45,
             id_document=IdDocument(type="passport", number="RU8837261"),
+            transactions=DEMO_LEDGER,
             notes="Multiple cash deposits just under threshold; rapid outward transfers.",
         )
+
+
+# The demo case's ledger: ordinary consulting income, then four cash deposits
+# parked just under the 10,000 reporting threshold, then funds routed straight
+# back out to an offshore counterparty. Structuring + pass-through, in rows.
+DEMO_LEDGER: list[dict[str, Any]] = [
+    {"date": "2026-01-06", "amount": 6200.0, "direction": "in",
+     "counterparty": "Meridian Consulting", "channel": "transfer"},
+    {"date": "2026-01-09", "amount": 1450.0, "direction": "out",
+     "counterparty": "Landlord Ltd", "channel": "transfer"},
+    {"date": "2026-01-13", "amount": 9400.0, "direction": "in",
+     "counterparty": "Cash Deposit", "channel": "cash"},
+    {"date": "2026-01-14", "amount": 9750.0, "direction": "in",
+     "counterparty": "Cash Deposit", "channel": "cash"},
+    {"date": "2026-01-15", "amount": 9200.0, "direction": "in",
+     "counterparty": "Cash Deposit", "channel": "cash"},
+    {"date": "2026-01-16", "amount": 9600.0, "direction": "in",
+     "counterparty": "Cash Deposit", "channel": "cash"},
+    {"date": "2026-01-17", "amount": 14000.0, "direction": "in",
+     "counterparty": "Offshore Holdings Ltd", "channel": "wire",
+     "country": "Cayman Islands"},
+    {"date": "2026-01-18", "amount": 13500.0, "direction": "out",
+     "counterparty": "Offshore Holdings Ltd", "channel": "wire",
+     "country": "Cayman Islands"},
+    {"date": "2026-01-20", "amount": 8800.0, "direction": "out",
+     "counterparty": "Shell Corp BVI", "channel": "wire",
+     "country": "British Virgin Islands"},
+]
 
 
 def parse_profile(data: Any) -> CustomerProfile:

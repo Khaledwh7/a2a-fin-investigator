@@ -1,9 +1,8 @@
 """Task store — owns the Task lifecycle.
 
 A2A defines the Task and its states; *how* you persist them is an
-implementation choice. Phase 2 ships an in-memory store behind a small
-interface so Phase 4 can drop in a SQLite-backed one without touching agents
-or the server.
+implementation choice. An in-memory store sits behind a small interface so the
+SQLite-backed one is a drop-in, with no change to agents or the server.
 
 Legal state transitions (we enforce them so a bug can't move a task backwards):
 
@@ -57,6 +56,7 @@ class TaskStore(Protocol):
     async def add_artifact(self, task_id: str, artifact: Artifact) -> Task: ...
     async def append_history(self, task_id: str, message: Message) -> Task: ...
     async def list(self, *, context_id: str | None = None) -> list[Task]: ...
+    async def delete_context(self, context_id: str) -> int: ...
 
 
 class InMemoryTaskStore:
@@ -98,6 +98,15 @@ class InMemoryTaskStore:
         if context_id is not None:
             tasks = [t for t in tasks if t.context_id == context_id]
         return tasks
+
+    async def delete_context(self, context_id: str) -> int:
+        """Drop every task in one investigation. Returns how many were removed."""
+        async with self._lock:
+            doomed = [tid for tid, t in self._tasks.items()
+                      if t.context_id == context_id]
+            for tid in doomed:
+                del self._tasks[tid]
+            return len(doomed)
 
     def _require(self, task_id: str) -> Task:
         task = self._tasks.get(task_id)

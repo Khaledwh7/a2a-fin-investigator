@@ -278,8 +278,11 @@ class OrchestratorExecutor(AgentExecutor):
         pipeline keeps going (partial data is still surfaced) — but the caller
         will mark the whole investigation FAILED afterwards.
         """
+        # The metadata is what makes a live pipeline view possible: a subscriber
+        # learns which agent just started without parsing the note text.
         await events.update_status(ctx.task, TaskState.WORKING,
-                                   f"delegating to {role.value} agent via A2A")
+                                   f"delegating to {role.value} agent via A2A",
+                                   metadata={"agent": role.value, "phase": "start"})
         with trace.span(f"a2a:{role.value}", kind="a2a_call", agent=role.value) as span:
             span.est_tokens = estimate_payload_tokens(data)  # request size (estimated)
             try:
@@ -291,12 +294,18 @@ class OrchestratorExecutor(AgentExecutor):
                     metadata={"delegation_depth": depth + 1, "from": self.role},
                 )
                 task = await self.client.send_message(rpc_url, message)  # type: ignore[union-attr]
+                # Record which wire the hop actually took, so a peer that had to
+                # fail over to the in-process transport is visible in the trace.
+                if self.client.uses_loopback(rpc_url):  # type: ignore[union-attr]
+                    span.detail["transport"] = "loopback"
             except A2AError as exc:
                 failures.append(role.value)
                 span.status, span.error = "error", exc.message
                 await events.update_status(
                     ctx.task, TaskState.WORKING,
-                    f"{role.value} agent failed ({exc.message}); continuing degraded")
+                    f"{role.value} agent failed ({exc.message}); continuing degraded",
+                    metadata={"agent": role.value, "phase": "error",
+                              "error": exc.message})
                 return {}
 
             if task.status.state != TaskState.COMPLETED or not task.artifacts:
@@ -304,7 +313,9 @@ class OrchestratorExecutor(AgentExecutor):
                 span.status, span.error = "error", "no result"
                 await events.update_status(
                     ctx.task, TaskState.WORKING,
-                    f"{role.value} agent returned no result; continuing degraded")
+                    f"{role.value} agent returned no result; continuing degraded",
+                    metadata={"agent": role.value, "phase": "error",
+                              "error": "no result"})
                 return {}
 
             artifact = task.artifacts[-1]

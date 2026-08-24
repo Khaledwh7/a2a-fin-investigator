@@ -1,8 +1,7 @@
 # Architecture — AI Financial Investigation Assistant (A2A)
 
-> **Phase 1 deliverable.** This document defines the system before any feature
-> code is written. It is also the map you use to explain the project in an
-> interview.
+> The design of the system: what each agent is responsible for, how they talk
+> to each other over A2A, and why the boundaries fall where they do.
 
 ---
 
@@ -110,7 +109,7 @@ an interview and mean it.
 | **Error handling** | `a2a/errors.py` | typed A2A error codes mapped to JSON-RPC |
 
 Full field-level mapping (and what we deliberately left out) is in
-[`a2a-spec-mapping.md`](./a2a-spec-mapping.md), written in Phase 2.
+[`a2a-spec-mapping.md`](./a2a-spec-mapping.md).
 
 ---
 
@@ -143,7 +142,7 @@ choices*. Every doc keeps that line visible.
 ## 6. Request lifecycle (one investigation, end to end)
 
 ```
-1. UI  → POST /investigations                 (human REST endpoint, JWT-authed)
+1. UI  → POST /investigations                 (human REST endpoint; SSO boundary)
 2. API → Orchestrator.execute(Message)        creates root Task, contextId = C
 3. Orchestrator, for each specialist:
      a. discover peer card  (GET /.well-known/agent-card.json)
@@ -156,6 +155,14 @@ choices*. Every doc keeps that line visible.
 
 Reliability rails on step 3: per-call **timeout**, **retry with backoff**,
 **max-iteration / max-depth** guards so an agent can never loop forever.
+
+The **agent-to-agent** hops in step 3 carry a JWT and are authorized per role
+(least-privilege scopes) and the peer's card signature is verified. Step 1 is a
+different trust boundary: the human REST gateway is the analyst console, and it
+is unauthenticated in this build — in a real deployment it sits behind the
+bank's SSO, and the `X-Analyst` header it attributes audit entries to would come
+from that identity rather than from the client. Calling it "authenticated" here
+would misdescribe what the code does.
 
 ---
 
@@ -187,7 +194,7 @@ Reliability rails on step 3: per-call **timeout**, **retry with backoff**,
   flow.
 - **Evaluation**: after a run, score task success, agent routing correctness,
   report quality, factual consistency (does the report match the findings?),
-  latency and cost. Details in Phase 7.
+  latency and cost.
 
 ---
 

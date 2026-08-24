@@ -1,4 +1,4 @@
-"""Phase 7 — the evaluation harness itself.
+"""The evaluation harness itself.
 
 Two things to prove: (1) the whole suite passes on the real system, and (2) the
 evaluators actually *discriminate* — they must fail when the answer is wrong,
@@ -25,6 +25,46 @@ async def test_full_eval_suite_passes():
     # Every dimension averages well above the noise floor.
     for dim, avg in card.by_dimension.items():
         assert avg >= 0.9, f"{dim} averaged only {avg}"
+
+
+async def test_detection_benchmark_has_no_misses_or_false_positives():
+    """The suite measures detection, not just conformance.
+
+    Precision matters as much as recall here: a detector that fired on every
+    customer would pass a positives-only suite and bury an analyst in practice.
+    """
+    card = await evaluate()
+    matrix = card.detection
+    totals = matrix.totals
+
+    assert totals.fn == 0, [m for m in matrix.mistakes if "MISSED" in m]
+    assert totals.fp == 0, [m for m in matrix.mistakes if "FALSE POSITIVE" in m]
+    assert totals.precision == 1.0 and totals.recall == 1.0
+    # Negatives must actually outnumber positives, or "precision 1.0" is cheap.
+    assert totals.tn > totals.tp
+
+    # Every detector the system ships is exercised by at least one positive case,
+    # so none of them can rot unnoticed behind a green scorecard.
+    assert matrix.unexercised == [], matrix.unexercised
+
+
+async def test_benchmark_would_catch_a_regression():
+    """A guard on the guard: the matrix must react to a wrong answer."""
+    from app.evaluation.detection import DETECTORS, DetectionMatrix
+
+    matrix = DetectionMatrix()
+    matrix.add("case_a", {"structuring"}, {"structuring"})          # correct
+    matrix.add("case_b", {"structuring"}, set())                    # a miss
+    matrix.add("case_c", set(), {"sanctions_hit"})                  # a false positive
+
+    totals = matrix.totals
+    assert totals.tp == 1 and totals.fn == 1 and totals.fp == 1
+    assert matrix.stats["structuring"].recall == 0.5
+    assert matrix.stats["sanctions_hit"].precision == 0.0
+    assert any("MISSED structuring" in m for m in matrix.mistakes)
+    assert any("FALSE POSITIVE sanctions_hit" in m for m in matrix.mistakes)
+    # Detectors never asked to fire are not counted as perfect recall by accident.
+    assert set(matrix.stats) == set(DETECTORS)
 
 
 async def test_bands_match_expected():

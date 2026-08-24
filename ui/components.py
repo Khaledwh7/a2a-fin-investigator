@@ -155,6 +155,53 @@ def decision_banner(summary: dict) -> str:
     </div>"""
 
 
+def failure_banner(failed: list[dict], state: str) -> str:
+    """Shown INSTEAD of the decision banner when the pipeline did not complete.
+
+    A compliance verdict is only as good as the agents that produced it. If any
+    specialist failed, the scores below are computed from missing evidence — so
+    the UI must say so instead of presenting a green, low-risk-looking result.
+    """
+    rows = "".join(
+        f'<tr><td>{ICONS.get(s.get("agent"), "")} '
+        f'{html.escape(LABELS.get(s.get("agent"), str(s.get("agent"))))}</td>'
+        f'<td class="bad">{html.escape(str(s.get("error") or "no result"))}</td></tr>'
+        for s in failed)
+    names = ", ".join(LABELS.get(s.get("agent"), str(s.get("agent"))) for s in failed)
+    return f"""
+    <div style="background:#231519;border:1px solid #e5484d;border-left:6px solid #e5484d;
+                border-radius:14px;padding:16px 20px;margin:6px 0 10px">
+      <div style="font-size:20px;font-weight:800;color:#e5484d">
+        ⚠ Investigation incomplete — no verdict
+      </div>
+      <div style="color:#cdd3e0;margin-top:6px">
+        {len(failed)} of {len(PIPELINE) - 1} agents did not return findings
+        ({html.escape(names)}), so the risk score and decision below would be based
+        on missing evidence and are <b>withheld</b>. Task state:
+        <code>{html.escape(state)}</code>. Fix the cause and re-run before making a
+        compliance decision.
+      </div>
+      <table class="mini" style="margin-top:10px">
+        <tr><th>Agent</th><th>Reason</th></tr>{rows}</table>
+    </div>"""
+
+
+def transport_notice(origins: list[str]) -> str:
+    """Warn that peers are being served in-process because their URL isn't live."""
+    where = ", ".join(html.escape(o) for o in origins)
+    return f"""
+    <div style="background:#2a2016;border:1px solid #f5a524;border-radius:12px;
+                padding:10px 14px;margin:6px 0">
+      <b style="color:#f5a524">⚠ A2A peers served in-process</b>
+      <div style="color:#cdd3e0;margin-top:3px;font-size:13px">
+        Nothing is listening at {where}, so the orchestrator is calling its peers
+        through the in-process transport instead of over the network. Results are
+        correct, but point the <code>*_URL</code> settings at the port the API
+        actually bound to restore real A2A HTTP traffic.
+      </div>
+    </div>"""
+
+
 def confidence_bar(value: int) -> str:
     color = "#30a46c" if value >= 75 else "#f5d90a" if value >= 50 else "#f76808"
     return (f'<div style="background:#1b2029;border-radius:8px;height:16px;'
@@ -189,17 +236,29 @@ def identity_block(profile: dict) -> str:
             f'<div style="display:flex;gap:22px;flex-wrap:wrap">{cells}</div></div>')
 
 
-def score_waterfall(breakdown: list[dict], score: int, band: str) -> str:
+def score_waterfall(breakdown: list[dict], band: str) -> str:
     if not breakdown:
-        return ('<div class="muted">No contributing factors — score 0 (LOW).</div>')
+        return '<div class="muted">No contributing factors — score 0 (LOW).</div>'
     color = band_color(band)
     rows = []
     for step in breakdown:
+        name = html.escape(step["factor"].replace("_", " "))
+        if not step.get("assessed", True):
+            rows.append(
+                f'<div style="display:flex;align-items:center;gap:10px;margin:3px 0;'
+                f'opacity:.6"><div style="width:170px;font-size:13px;color:#8b93a7">'
+                f'{name}</div>'
+                f'<div style="width:52px;font-family:monospace;font-size:12px;'
+                f'color:#8b93a7">—</div>'
+                f'<div style="flex:1;font-size:12px;color:#8b93a7">'
+                f'not assessed · excluded from the blend</div>'
+                f'<div style="width:44px;text-align:right;font-family:monospace;'
+                f'font-size:12px;color:#8b93a7">{step["running_total"]}</div></div>')
+            continue
         pct = min(100, step["running_total"])
         rows.append(
             f'<div style="display:flex;align-items:center;gap:10px;margin:3px 0">'
-            f'<div style="width:170px;font-size:13px;color:#cdd3e0">'
-            f'{html.escape(step["factor"].replace("_", " "))}</div>'
+            f'<div style="width:170px;font-size:13px;color:#cdd3e0">{name}</div>'
             f'<div style="width:52px;font-family:monospace;font-size:12px;color:#f76808">'
             f'+{step["weight"]}</div>'
             f'<div style="flex:1;background:#1b2029;border-radius:6px;overflow:hidden">'
@@ -215,7 +274,11 @@ _DIM_ORDER = [("sanctions", "Sanctions", -90), ("transaction", "Transaction", -1
 
 
 def risk_radar(dims: dict) -> str:
-    """A 5-axis radar of the risk dimensions (0–100 each)."""
+    """A 5-axis radar of the risk dimensions (0–100 each).
+
+    Unassessed axes are drawn dashed and excluded from the shape: plotting them
+    at zero would draw "no risk here" where the truth is "we don't know".
+    """
     cx, cy, r = 140, 125, 80
 
     def pt(angle: float, radius: float) -> tuple[float, float]:
@@ -227,36 +290,107 @@ def risk_radar(dims: dict) -> str:
         pts = " ".join(f"{x:.1f},{y:.1f}"
                        for x, y in (pt(a, r * frac) for _, _, a in _DIM_ORDER))
         rings += f'<polygon points="{pts}" fill="none" stroke="#262b36"/>'
-    axes = labels = ""
-    for _key, label, a in _DIM_ORDER:
-        x, y = pt(a, r)
-        axes += f'<line x1="{cx}" y1="{cy}" x2="{x:.1f}" y2="{y:.1f}" stroke="#262b36"/>'
-        lx, ly = pt(a, r + 15)
-        labels += (f'<text x="{lx:.1f}" y="{ly + 3:.1f}" text-anchor="middle" '
-                   f'font-size="10" fill="#8b93a7">{label}</text>')
+
+    axes = labels = shape = ""
     vpts = []
-    for key, _label, a in _DIM_ORDER:
-        v = max(0, min(100, (dims.get(key, {}) or {}).get("score", 0)))
-        x, y = pt(a, r * v / 100)
-        vpts.append(f"{x:.1f},{y:.1f}")
+    for key, label, a in _DIM_ORDER:
+        dim = dims.get(key, {}) or {}
+        assessed = dim.get("assessed", True)
+        x, y = pt(a, r)
+        dash = "" if assessed else ' stroke-dasharray="3 3"'
+        axes += (f'<line x1="{cx}" y1="{cy}" x2="{x:.1f}" y2="{y:.1f}" '
+                 f'stroke="#262b36"{dash}/>')
+        lx, ly = pt(a, r + 15)
+        fill = "#8b93a7" if assessed else "#5b6275"
+        suffix = "" if assessed else " (n/a)"
+        labels += (f'<text x="{lx:.1f}" y="{ly + 3:.1f}" text-anchor="middle" '
+                   f'font-size="10" fill="{fill}">{label}{suffix}</text>')
+        if assessed:
+            v = max(0, min(100, dim.get("score", 0)))
+            px, py = pt(a, r * v / 100)
+            vpts.append(f"{px:.1f},{py:.1f}")
+
+    if len(vpts) >= 3:
+        shape = (f'<polygon points="{" ".join(vpts)}" fill="#4c8bf540" '
+                 f'stroke="#4c8bf5" stroke-width="2"/>')
+    elif vpts:  # too few axes to enclose an area — show the points instead
+        shape = "".join(f'<circle cx="{p.split(",")[0]}" cy="{p.split(",")[1]}" r="3" '
+                        f'fill="#4c8bf5"/>' for p in vpts)
     return (f'<svg width="280" height="250" viewBox="0 0 280 250">{rings}{axes}'
-            f'<polygon points="{" ".join(vpts)}" fill="#4c8bf540" stroke="#4c8bf5" '
-            f'stroke-width="2"/>{labels}</svg>')
+            f'{shape}{labels}</svg>')
 
 
 def dimension_bars(dims: dict) -> str:
+    """One bar per risk dimension. A dimension with no evidence reads 'not
+    assessed' — never a reassuring empty bar at zero."""
     rows = []
     for key, label, _a in _DIM_ORDER:
-        score = (dims.get(key, {}) or {}).get("score", 0)
+        dim = dims.get(key, {}) or {}
+        score = dim.get("score", 0)
+        if not dim.get("assessed", True):
+            rows.append(
+                f'<div style="display:flex;align-items:center;gap:10px;margin:4px 0">'
+                f'<div style="width:96px;font-size:13px;color:#8b93a7">{label}</div>'
+                f'<div style="flex:1;height:14px;border-radius:6px;border:1px dashed '
+                f'#3a4152;background:repeating-linear-gradient(45deg,#161a23,#161a23 5px,'
+                f'#1b2029 5px,#1b2029 10px)"></div>'
+                f'<div style="width:74px;text-align:right;font-size:11px;'
+                f'color:#8b93a7">not assessed</div></div>')
+            continue
         col = "#e5484d" if score >= 70 else "#f76808" if score >= 40 else "#30a46c"
+        attested = dim.get("evidence") == "analyst-attested"
+        mark = (' <span class="pill" style="color:#f5a524;background:#f5a52422;'
+                'font-size:9px">ATTESTED</span>' if attested else "")
         rows.append(
             f'<div style="display:flex;align-items:center;gap:10px;margin:4px 0">'
-            f'<div style="width:96px;font-size:13px;color:#cdd3e0">{label}</div>'
+            f'<div style="width:96px;font-size:13px;color:#cdd3e0">{label}{mark}</div>'
             f'<div style="flex:1;background:#1b2029;border-radius:6px;overflow:hidden">'
             f'<div style="width:{score}%;background:{col};height:14px"></div></div>'
-            f'<div style="width:40px;text-align:right;font-family:monospace;'
+            f'<div style="width:74px;text-align:right;font-family:monospace;'
             f'font-size:12px;color:#8b93a7">{score}</div></div>')
     return "".join(rows)
+
+
+def coverage_note(risk: dict) -> str:
+    """Say how much of the model was actually scored, and on what evidence."""
+    missing = risk.get("unassessed_dimensions") or []
+    conf = risk.get("confidence", {}) or {}
+    coverage = risk.get("coverage_pct", 100)
+    if not missing:
+        return (f'<div class="muted" style="font-size:12px;margin-top:6px">'
+                f'Full model coverage · {html.escape(str(conf.get("basis", "")))}</div>')
+    names = ", ".join(m.replace("_", " ") for m in missing)
+    return f"""
+    <div style="background:#2a2016;border:1px solid #f5a524;border-radius:12px;
+                padding:10px 14px;margin:8px 0">
+      <b style="color:#f5a524">Provisional rating — {coverage}% model coverage</b>
+      <div style="color:#cdd3e0;margin-top:3px;font-size:13px">
+        <b>{html.escape(names)}</b> could not be assessed and {'was' if len(missing) == 1
+        else 'were'} excluded from the blend rather than scored zero. Confidence is
+        capped at {conf.get('value', 0)}/100 accordingly.
+      </div>
+    </div>"""
+
+
+def not_assessed(title: str, reason: str, observations: list[dict] | None = None) -> str:
+    """The panel shown in place of metrics when an agent had nothing to analyse."""
+    obs = ""
+    if observations:
+        items = "".join(
+            f'<li style="margin:3px 0">{html.escape(o["detail"])}</li>'
+            for o in observations)
+        obs = (f'<div style="margin-top:10px;color:#cdd3e0;font-size:13px">'
+               f'<b style="color:#f5a524">Analyst-attested observations</b> '
+               f'<span class="muted">— declared, not verified against transactions'
+               f'</span><ul style="margin:6px 0 0 18px;padding:0">{items}</ul></div>')
+    return f"""
+    <div style="background:#161a23;border:1px dashed #3a4152;border-radius:14px;
+                padding:16px 18px;margin:6px 0">
+      <div style="font-weight:700;color:#e6e8ee">◌ {html.escape(title)} — not assessed</div>
+      <div style="color:#8b93a7;margin-top:4px;font-size:13px">
+        {html.escape(reason)}</div>
+      {obs}
+    </div>"""
 
 
 def transactions_table(txns: list[dict], flagged_only: bool = False) -> str:
@@ -342,4 +476,11 @@ def trace_timeline(spans: list[dict]) -> str:
             f'</div>'
             f'<div style="width:70px;text-align:right;font-family:monospace;'
             f'font-size:12px;color:#8b93a7">{s["duration_ms"]:.1f} ms</div></div>')
+        # A red bar with no reason is a dead end for whoever has to fix it.
+        if s.get("error"):
+            rows.append(f'<div style="margin:-2px 0 6px 100px;font-size:12px" '
+                        f'class="bad">↳ {html.escape(str(s["error"]))}</div>')
+        elif s.get("detail", {}).get("transport") == "loopback":
+            rows.append('<div style="margin:-2px 0 6px 100px;font-size:12px" '
+                        'class="muted">↳ served in-process (peer URL not listening)</div>')
     return "".join(rows)

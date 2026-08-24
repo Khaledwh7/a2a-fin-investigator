@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.database.models import AuditRecord
@@ -58,6 +58,7 @@ class AuditLogger(Protocol):
                      outcome: str, detail: dict[str, Any] | None = None) -> None: ...
     async def entries(self) -> list[AuditEntry]: ...
     async def verify_chain(self) -> bool: ...
+    async def clear(self) -> int: ...
 
 
 class MemoryAuditLogger:
@@ -81,6 +82,20 @@ class MemoryAuditLogger:
 
     async def verify_chain(self) -> bool:
         return _verify(self._entries)
+
+    async def clear(self) -> int:
+        """Discard the whole log and start a new chain from genesis.
+
+        Deliberately all-or-nothing: removing *one* entry would leave a chain
+        that still verifies only if you also recompute every hash after it,
+        which is precisely the forgery the chain exists to make detectable.
+        Dropping the log entirely destroys history but forges nothing, and the
+        caller records the clearance as the first entry of the new chain.
+        """
+        async with self._lock:
+            count = len(self._entries)
+            self._entries.clear()
+            return count
 
 
 class DbAuditLogger:
@@ -112,6 +127,15 @@ class DbAuditLogger:
 
     async def verify_chain(self) -> bool:
         return _verify(await self.entries())
+
+    async def clear(self) -> int:
+        """Discard the whole log and start a new chain (see MemoryAuditLogger)."""
+        async with self._lock, self._sf() as s:
+            count = (await s.execute(
+                select(AuditRecord.seq))).scalars().all()
+            await s.execute(delete(AuditRecord))
+            await s.commit()
+            return len(count)
 
 
 def _verify(entries: list[AuditEntry]) -> bool:

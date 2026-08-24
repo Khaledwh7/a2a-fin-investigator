@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 
+import httpx
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
@@ -29,6 +30,7 @@ from app.agents.aml import AMLExecutor
 from app.agents.cards import build_all_cards
 from app.agents.fraud import FraudExecutor
 from app.agents.kyc import KYCExecutor
+from app.agents.llm import aclose as close_llm_client
 from app.agents.orchestrator import OrchestratorExecutor
 from app.agents.reporting import ReportingExecutor
 from app.agents.risk import RiskExecutor
@@ -77,8 +79,15 @@ def _prepare_card(card: AgentCard, settings: Settings, secret: str) -> AgentCard
 
 
 def default_client(settings: Settings, *, token_service: TokenService | None,
-                   secret: str) -> A2AClient:
-    """The orchestrator's outbound client, carrying its identity + trust config."""
+                   secret: str,
+                   transport: httpx.AsyncBaseTransport | None = None) -> A2AClient:
+    """The orchestrator's outbound client, carrying its identity + trust config.
+
+    ``transport`` points the same fully-configured client at an in-process app
+    instead of a socket. Tests use it so they exercise the credentials and card
+    verification the app actually ships with, rather than substituting a bare
+    client that quietly skips both.
+    """
     token_provider = None
     if settings.require_agent_auth and token_service is not None:
         grants = AGENT_GRANTS[AgentRole.ORCHESTRATOR]
@@ -101,6 +110,7 @@ def default_client(settings: Settings, *, token_service: TokenService | None,
         token_provider=token_provider,
         require_signed_cards=settings.require_signed_agent_cards,
         card_verifier=card_verifier,
+        transport=transport,
     )
 
 
@@ -171,6 +181,7 @@ def build_app(settings: Settings | None = None, *, client: A2AClient | None = No
             await init_models(engine)
         yield
         await orchestrator.aclose()
+        await close_llm_client()
         if engine is not None:
             await engine.dispose()
 
@@ -185,9 +196,15 @@ def build_app(settings: Settings | None = None, *, client: A2AClient | None = No
                             settings.rate_limit_burst)
         if settings.rate_limit_enabled else None)
 
-    orchestrator.set_client(
-        client or default_client(settings, token_service=token_service, secret=secret))
+    a2a_client = client or default_client(settings, token_service=token_service,
+                                          secret=secret)
+    # Every role is mounted on THIS app, so it can serve its own peers in-process
+    # if their configured URL turns out not to be listening (wrong port, server
+    # not up yet, localhost behind a proxy). Real HTTP stays the default path.
+    a2a_client.set_loopback(httpx.ASGITransport(app=app))
+    orchestrator.set_client(a2a_client)
 
+    app.state.a2a_client = a2a_client
     app.state.settings = settings
     app.state.agents = agents
     app.state.executors = executors

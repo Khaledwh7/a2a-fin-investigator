@@ -46,13 +46,17 @@ from app.a2a.types import (
     TaskStatus,
     canonical_method,
 )
+from app.observability.logging import get_logger, log_warning
 
 # Identity that authenticated a request (the caller's ``sub``), or None when auth
-# is disabled. The factory injects a real JWT authenticator in Phase 5; the
-# server itself imports nothing from app/security.
+# is disabled. The factory injects the real JWT authenticator; the server
+# itself imports nothing from app/security.
 Authenticator = Callable[[dict[str, str]], Awaitable["str | None"]]
 # Validates an inbound Message (parts/size limits); injected, may be None.
 MessageValidator = Callable[["Message"], None]
+
+
+_log = get_logger("a2a.server")
 
 
 async def _no_auth(_headers: dict[str, str]) -> str | None:
@@ -140,8 +144,14 @@ class A2AAgent:
         if isinstance(event, TaskStatusUpdateEvent):
             try:
                 await self.tasks.set_status(event.task_id, event.status)
-            except Exception:  # noqa: BLE001 — an illegal transition shouldn't kill the stream
-                pass
+            except Exception as exc:  # noqa: BLE001 — must not kill the stream
+                # A rejected transition (e.g. an executor emitting WORKING after
+                # a terminal state) is a bug in that executor. Dropping it keeps
+                # the stream alive, but swallowing it silently means nobody ever
+                # finds out — so it is logged rather than discarded.
+                log_warning(_log, "task_status_transition_rejected",
+                            task_id=event.task_id,
+                            state=event.status.state.value, error=str(exc))
         elif isinstance(event, TaskArtifactUpdateEvent):
             await self.tasks.add_artifact(event.task_id, event.artifact)
 

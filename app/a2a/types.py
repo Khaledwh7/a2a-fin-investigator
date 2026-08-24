@@ -309,7 +309,7 @@ class AgentSkill(_A2AModel):
 
 
 class AgentCardSignature(_A2AModel):
-    """Detached JWS over the card (rogue-agent protection). Populated in Phase 5."""
+    """Detached JWS over the card (rogue-agent protection)."""
 
     protected: str
     signature: str

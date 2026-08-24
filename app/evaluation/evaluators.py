@@ -15,6 +15,7 @@ from dataclasses import dataclass
 
 from app.a2a.types import Task, TaskState
 from app.evaluation.dataset import Scenario
+from app.evaluation.detection import observed_detections
 from app.observability.trace import InvestigationTrace
 
 
@@ -69,12 +70,22 @@ def eval_answer_quality(sc: Scenario, task: Task, trace: InvestigationTrace) -> 
     data = _report_data(task)
     sanc = (_artifact(task, "sanctions_findings").first_data()
             if _artifact(task, "sanctions_findings") else {}) or {}
-    # structural checks (is the report well-formed?) ...
+    # structural checks (is the report well-formed?) — matched against heading
+    # lines rather than exact strings, so section numbering can change without
+    # silently turning these into no-ops.
+    headings = [ln for ln in text.splitlines() if ln.startswith("## ")]
+    def has_section(keyword: str) -> bool:
+        return any(keyword.lower() in h.lower() for h in headings)
+
     structural = {
-        "has_summary": "## Summary" in text,
-        "has_kyc": "## KYC" in text,
-        "has_aml": "## AML" in text,
-        "has_sanctions": "## Sanctions" in text,
+        "has_summary": has_section("summary"),
+        "has_kyc": has_section("kyc"),
+        "has_aml": has_section("aml"),
+        "has_sanctions": has_section("sanctions"),
+        "has_fraud": has_section("fraud"),
+        "has_risk_assessment": has_section("risk assessment"),
+        "has_coverage": has_section("evidence"),
+        "has_methodology": has_section("methodology"),
         "has_recommendation": bool(data.get("recommendation")),
     }
     # ... and correctness checks against ground truth.
@@ -135,10 +146,30 @@ def eval_cost(sc: Scenario, task: Task, trace: InvestigationTrace) -> DimensionS
                           f"est_tokens={trace.est_tokens}, llm_tokens={trace.llm_tokens}")
 
 
+def eval_detection(sc: Scenario, task: Task, trace: InvestigationTrace) -> DimensionScore:
+    """Did exactly the labelled detectors fire — no misses, no false positives?
+
+    Scored per scenario for the readout; the suite-level precision/recall lives
+    in ``app.evaluation.detection``.
+    """
+    expected = set(sc.expect.detections)
+    observed = observed_detections(task)
+    missed = sorted(expected - observed)
+    spurious = sorted(observed - expected)
+    union = expected | observed
+    # Nothing expected and nothing fired is a correct result, not a zero.
+    score = 1.0 if not union else len(expected & observed) / len(union)
+    detail = "exact match" if not (missed or spurious) else ", ".join(
+        ([f"missed={missed}"] if missed else [])
+        + ([f"false_positive={spurious}"] if spurious else []))
+    return DimensionScore("detection", round(score, 3), not (missed or spurious), detail)
+
+
 EVALUATORS = [
     eval_task_success,
     eval_agent_routing,
     eval_answer_quality,
+    eval_detection,
     eval_factual_consistency,
     eval_latency,
     eval_cost,

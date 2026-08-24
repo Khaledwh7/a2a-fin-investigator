@@ -10,8 +10,9 @@ Two numbers the UI shows:
     number even with no LLM, and demonstrates the accounting path. Always
     labelled "estimated".
 
-⚠️ PRICING BELOW IS ILLUSTRATIVE (USD per 1M tokens). Update to the current
-published Anthropic price list before quoting real costs.
+⚠️ PRICING BELOW is the published list price (USD per 1M tokens) at the time of
+writing. Re-check it against the current Anthropic price list before quoting
+real costs — an unknown model falls back to 0.0 rather than guessing.
 """
 
 from __future__ import annotations
@@ -21,10 +22,10 @@ from typing import Any
 
 # (input_per_million, output_per_million) — ILLUSTRATIVE, verify before use.
 PRICING_USD_PER_MTOK: dict[str, tuple[float, float]] = {
-    "claude-opus-5": (15.0, 75.0),
+    "claude-opus-5": (5.0, 25.0),
+    "claude-opus-4-8": (5.0, 25.0),
     "claude-sonnet-5": (3.0, 15.0),
-    "claude-haiku-4-5": (0.80, 4.0),
-    "claude-opus-4-8": (15.0, 75.0),
+    "claude-haiku-4-5": (1.0, 5.0),
 }
 
 

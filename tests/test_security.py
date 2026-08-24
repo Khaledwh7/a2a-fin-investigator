@@ -1,4 +1,4 @@
-"""Phase 5 — security controls, each proven end to end.
+"""Security controls, each proven end to end.
 
 Covers: JWT authentication, RBAC/least-privilege authorization, secure
 agent-to-agent auth, input validation, rate limiting, prompt-injection
@@ -32,6 +32,41 @@ from app.security.rbac import (
     required_scope_to_invoke,
 )
 from app.security.signing import sign_card, verify_card
+from tests.conftest import user_client, wire_orchestrator
+
+
+# --------------------------------------------------------------------------- #
+# The shipped configuration
+# --------------------------------------------------------------------------- #
+def test_the_app_ships_secured_by_default():
+    """The default configuration must be the secured one.
+
+    The controls are only worth having if they are the ones that run. This
+    guards against the default quietly reverting and every other security test
+    continuing to pass because it opts in explicitly.
+    """
+    settings = Settings()
+    assert settings.require_agent_auth is True
+    assert settings.require_signed_agent_cards is True
+    # Human review is a compliance control, not a security one, but it is part
+    # of the same "safe by default" posture.
+    assert settings.require_human_review is True
+
+
+async def test_default_app_rejects_an_unauthenticated_a2a_call():
+    """End to end on the *default* settings — no explicit hardening in the test."""
+    app = build_app(Settings())
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://d") as raw:
+        resp = await raw.post(
+            "/a2a/kyc", headers={"A2A-Version": "1.0"},
+            json={"jsonrpc": "2.0", "id": 1, "method": "SendMessage",
+                  "params": {"message": {"parts": [{"text": "hi"}]}}})
+    assert resp.status_code == 401
+    # And the card it serves is signed, so a peer can detect an impostor.
+    async with httpx.AsyncClient(transport=transport, base_url="http://d") as raw:
+        card = (await raw.get("/a2a/kyc/.well-known/agent-card.json")).json()
+    assert card.get("signatures")
 
 
 # --------------------------------------------------------------------------- #
@@ -160,10 +195,14 @@ async def test_oversized_text_part_rejected():
     settings = Settings(max_text_part_chars=100)
     app = build_app(settings)
     transport = httpx.ASGITransport(app=app)
+    # Authenticated: with auth on by default, an unauthenticated caller is turned
+    # away before validation ever runs, so a token is needed to reach it.
+    token = app.state.token_service.issue(agent_subject(AgentRole.ORCHESTRATOR),
+                                          AGENT_GRANTS[AgentRole.ORCHESTRATOR])
     async with httpx.AsyncClient(transport=transport, base_url="http://v") as raw:
         resp = await raw.post(
             "/a2a/kyc",
-            headers={"A2A-Version": "1.0"},
+            headers={"A2A-Version": "1.0", "Authorization": f"Bearer {token}"},
             json={"jsonrpc": "2.0", "id": 1, "method": "SendMessage",
                   "params": {"message": {"role": "ROLE_USER",
                                          "parts": [{"text": "A" * 500}]}}})
@@ -213,8 +252,8 @@ async def test_injection_is_audited_during_investigation():
     settings = Settings()
     app = build_app(settings)
     transport = httpx.ASGITransport(app=app)
-    app.state.orchestrator.set_client(A2AClient(transport=transport, max_attempts=1))
-    user = A2AClient(transport=transport, max_attempts=1)
+    wire_orchestrator(app, transport)
+    user = user_client(app, transport)
 
     evil_profile = CustomerProfile(
         full_name="John Smith", country="UK",

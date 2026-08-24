@@ -11,10 +11,10 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from app.a2a.client import A2AClient
 from app.agents.schemas import CustomerProfile
 from app.api.factory import build_app
 from app.config import Settings
+from tests.conftest import wire_orchestrator
 
 
 @pytest.fixture
@@ -22,7 +22,7 @@ def hitl():
     settings = Settings(require_human_review=True)
     app = build_app(settings)
     transport = httpx.ASGITransport(app=app)
-    app.state.orchestrator.set_client(A2AClient(transport=transport, max_attempts=1))
+    wire_orchestrator(app, transport)
     return app, transport
 
 

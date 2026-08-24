@@ -67,3 +67,8 @@ def get_logger(name: str) -> logging.Logger:
 def log_event(logger: logging.Logger, event: str, **fields: Any) -> None:
     """Emit a structured event: message = event name, everything else in `fields`."""
     logger.info(event, extra={"fields": fields})
+
+
+def log_warning(logger: logging.Logger, event: str, **fields: Any) -> None:
+    """Same as :func:`log_event`, at WARNING — for degraded-but-handled conditions."""
+    logger.warning(event, extra={"fields": fields})

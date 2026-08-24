@@ -24,6 +24,8 @@ class FraudExecutor(SpecialistExecutor):
         return self.registry.call("detect_fraud", self.role, profile=profile.model_dump())
 
     def summarize(self, findings: dict[str, Any]) -> str:
+        if not findings.get("assessed", True):
+            return "Not assessed — no transaction ledger supplied"
         n = findings["signal_count"]
         if n == 0:
             return "No fraud typologies detected"

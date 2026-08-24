@@ -66,6 +66,25 @@ More detail: [`docs/architecture.md`](docs/architecture.md).
 | 📊 **Risk** | Blends five risk dimensions into a transparent score + confidence + decision |
 | 📝 **Reporting** | Writes the final report + recommended actions |
 
+### Where the numbers come from
+
+Every figure the UI shows is computed from what the analyst actually entered.
+Nothing is generated, sampled or seeded — run the same profile twice and you get
+identical findings, because there is no randomness in the pipeline at all.
+
+That means the system has to be honest about missing evidence rather than filling
+it in. There are exactly three evidence modes:
+
+| Evidence supplied | What happens |
+|---|---|
+| A transaction ledger | AML and Fraud analyse those rows; every flag points at a transaction you can open |
+| No ledger, but observed activity ticked | Carried as **analyst-attested** indicators — scored at a lower weight, labelled unverified everywhere they surface, and they cap confidence |
+| Neither | AML and Fraud report **not assessed**; their dimensions are dropped from the weighted blend (the rest renormalise) instead of being scored zero, and the rating is marked provisional |
+
+Scoring absent evidence as zero is what makes an unscreened customer look safe.
+Saying "not assessed", and cutting the confidence to match, is the difference
+between a demo and a rating someone could defend.
+
 ---
 
 ## What it demonstrates
@@ -76,10 +95,18 @@ Tasks & lifecycle, Messages/Parts, Artifacts, shared Context, the official error
 codes, `A2A-Version` negotiation, and signed Agent Cards. Wire format is
 spec-exact. *(Official-vs-ours ledger: [`docs/a2a-spec-mapping.md`](docs/a2a-spec-mapping.md).)*
 
-**Security** — JWT authentication + RBAC least-privilege (a specialist token can
-call nobody), signed cards + peer allowlist, rate limiting, input validation,
-prompt-injection guard, secret redaction, and a hash-chained (tamper-evident)
-audit log.
+**Security — on by default.** Agent-to-agent calls carry a short-lived JWT and
+every Agent Card is signed, in the shipped configuration and in the test suite:
+an unauthenticated A2A call gets `401`, a specialist token gets `403` (specialists
+hold no outbound scopes at all), and a user token cannot reach a specialist
+directly. Plus a peer allowlist, input validation, a prompt-injection guard,
+secret redaction, and a hash-chained (tamper-evident) audit log that records the
+analyst behind every run, decision and deletion. `GET /healthz` reports the live
+posture, and the UI states it rather than asserting it. Rate limiting is an
+ingress concern and is enabled in `docker-compose`. The analyst console itself
+(the REST gateway the UI talks to) is the other side of that boundary and is
+deliberately unauthenticated here — in a bank it sits behind SSO, which is where
+the `X-Analyst` identity on every audit entry would come from.
 
 **Human-in-the-loop & reliability** — high-stakes cases (HIGH/CRITICAL, SAR, or a
 sanctions hit) pause at the A2A `INPUT_REQUIRED` state for an analyst to
@@ -90,8 +117,12 @@ result) when a step breaks.
 **Observability** — a per-investigation trace (latency · tokens · cost · errors),
 counters + latency percentiles at `/metrics`, and structured JSON logs.
 
-**Evaluation** — a deterministic harness scoring the system on six dimensions
-(task success · routing · quality · consistency · latency · cost), gating at 80%.
+**Evaluation** — a deterministic harness over 17 labelled scenarios, scoring
+seven dimensions (task success · routing · quality · **detection** · consistency ·
+latency · cost) *and* a per-detector confusion matrix. The suite carries hard
+negatives — a cash-intensive café that must not read as structuring, a near-miss
+name that must not hit the sanctions list — so precision is measured, not just
+recall. CI gates on pass rate **and** on detection precision/recall.
 
 ---
 
@@ -112,6 +143,11 @@ uvicorn app.main:app --port 8000
 API_BASE_URL=http://localhost:8000 streamlit run ui/app.py
 ```
 
+**Watch a run stream live** (the same SSE feed the UI's pipeline is driven by):
+```bash
+curl -N -X POST http://localhost:8000/investigations/stream -H "Content-Type: application/json" -d '{"profile":{"full_name":"Viktor Petrov","country":"Russia"}}'
+```
+
 **From the terminal:**
 ```bash
 curl -s -X POST http://localhost:8000/investigations -H "Content-Type: application/json" -d '{"profile":{"full_name":"Viktor Petrov","country":"Russia","notes":"cash just under threshold; rapid transfers","id_document":{"number":"RU8837261"}}}'
@@ -124,6 +160,14 @@ pytest -q
 ```bash
 python -m app.evaluation
 ```
+
+> **Running the API on a different port?** The orchestrator reaches its peers over
+> real HTTP at the `*_URL` settings, which default to port 8000. If you start the
+> API elsewhere (`uvicorn app.main:app --port 9000`), set the peer URLs to match —
+> e.g. `PUBLIC_BASE_URL=http://localhost:9000` plus the six `*_URL` entries in
+> `.env`. If you don't, the app still works: peers that aren't listening fail over
+> to the in-process transport, and `GET /healthz` reports them under
+> `degraded_peers` so the mismatch is visible rather than silent.
 
 ---
 
@@ -196,8 +240,15 @@ app/
   observability/  # logging, trace, metrics, cost
   evaluation/     # scenarios, evaluators, runner
   api/            # FastAPI factory + REST routes
-ui/               # Streamlit app
-tests/            # 55 tests
+ui/               # Streamlit console
+  app.py          #   page chrome, sidebar, routing
+  views.py        #   one function per page
+  intake.py       #   the case form, ledger grid, running a detection
+  results.py      #   rendering a finished or paused investigation
+  components.py   #   HTML/CSS widgets (gauge, radar, pipeline, tables)
+  state.py        #   session state, navigation, shared actions
+  reference.py    #   form vocabularies   samples.py — demo cases
+tests/            # 129 tests (incl. 43 headless UI tests)
 docs/             # architecture.md · a2a-spec-mapping.md
 ```
 

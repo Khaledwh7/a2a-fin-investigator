@@ -40,7 +40,7 @@ class RequestContext:
                  caller: str | None = None, metadata: dict[str, Any] | None = None):
         self.message = message      # the incoming Message
         self.task = task            # the Task created for this request
-        self.caller = caller        # authenticated identity of the caller (Phase 5)
+        self.caller = caller        # authenticated identity of the caller
         self.metadata = metadata or {}
 
     @property
@@ -81,16 +81,25 @@ class EventQueue:
     # NOTE: these ONLY publish events. The server's persistence loop is the
     # single writer to the task store — so the emitters never mutate `task`
     # directly. That keeps the design correct for a copy-returning store
-    # (e.g. the SQLite store in Phase 4), where mutating the local object
+    # (e.g. the SQLite store), where mutating the local object
     # would otherwise be lost or, with a shared object, double-counted.
     async def update_status(self, task: Task, state: TaskState,
-                            note: str | None = None) -> None:
+                            note: str | None = None,
+                            metadata: dict[str, Any] | None = None) -> None:
+        """Publish a status update.
+
+        ``metadata`` rides on the event, not the persisted status — it is how an
+        executor tells a *live* subscriber something structured about the step
+        (which agent is starting, say) without a client having to parse the
+        human-readable note.
+        """
         status = TaskStatus(
             state=state,
             message=Message.agent_text(note, context_id=task.context_id) if note else None,
         )
         await self.publish(TaskStatusUpdateEvent(
-            task_id=task.id, context_id=task.context_id, status=status))
+            task_id=task.id, context_id=task.context_id, status=status,
+            metadata=metadata))
 
     async def emit_artifact(self, task: Task, artifact: Artifact) -> None:
         await self.publish(TaskArtifactUpdateEvent(
@@ -119,9 +128,9 @@ class AgentExecutor(ABC):
 
 
 class EchoExecutor(AgentExecutor):
-    """A trivial executor used by the Phase 2 tests to prove the plumbing works.
+    """A trivial executor that proves the protocol plumbing works end to end.
 
-    Real domain agents arrive in Phase 3.
+    Kept because it exercises the executor contract without any domain logic.
     """
 
     role = "echo"
