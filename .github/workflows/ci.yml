@@ -25,6 +25,29 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.lock
 
+      # The lock is only a guarantee while it still matches the spec it came
+      # from; edit requirements.txt without regenerating and CI would keep
+      # installing the old set silently. Recompiling *over a copy of the
+      # committed lock* preserves its existing pins, so this fails on a stale
+      # lock rather than every time an upstream release appears.
+      - name: Lockfile matches requirements.txt
+        run: |
+          python -m pip install uv
+          cp requirements.lock "$RUNNER_TEMP/check.lock"   # seed: keeps current pins
+          uv pip compile requirements.txt --universal --python-version 3.12 \
+            --no-header --quiet --output-file "$RUNNER_TEMP/check.lock"
+          # Compare requirement lines only — the committed lock carries a header.
+          grep -vE '^[[:space:]]*(#|$)' requirements.lock > "$RUNNER_TEMP/have.txt"
+          grep -vE '^[[:space:]]*(#|$)' "$RUNNER_TEMP/check.lock" > "$RUNNER_TEMP/want.txt"
+          if ! diff -u "$RUNNER_TEMP/have.txt" "$RUNNER_TEMP/want.txt"; then
+            echo "::error::requirements.lock is out of sync with requirements.txt."
+            echo "Regenerate it and commit the result:"
+            echo "  uv pip compile requirements.txt --universal --python-version 3.12 \\"
+            echo "      --no-header --output-file requirements.lock"
+            exit 1
+          fi
+          echo "lockfile is in sync"
+
       - name: Lint (ruff)
         run: ruff check app ui tests
 
