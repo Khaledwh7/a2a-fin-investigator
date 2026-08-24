@@ -11,6 +11,7 @@ is under test is the UI's own logic rather than the API's.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -20,7 +21,10 @@ from ui import api as ui_api
 from ui import intake, samples
 from ui.state import VIEW_ABOUT, VIEW_AUDIT, VIEW_HISTORY, VIEW_METRICS, VIEW_QUEUE
 
-APP = "ui/app.py"
+# Absolute, so the suite is independent of both the working directory and of
+# Streamlit's resolution rule for relative paths — which changed in 1.62 from
+# "relative to the CWD" to "relative to the file calling AppTest.from_file()".
+APP = str(Path(__file__).resolve().parent.parent / "ui" / "app.py")
 HEALTH_OK = {"status": "ok", "security": {"agent_auth": True, "signed_cards": True,
                                           "rate_limit": False, "human_review": True}}
 
