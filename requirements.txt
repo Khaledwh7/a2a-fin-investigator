@@ -19,7 +19,11 @@ asyncpg>=0.30.0            # PostgreSQL driver (docker-compose)
 pyjwt[crypto]>=2.10.0
 
 # --- UI ---
-streamlit>=1.40.0
+# Upper-bounded: CI installs the newest release that satisfies this line, so an
+# unbounded pin lets a future major version reach CI untested. (1.62 already
+# changed AppTest.from_file() path resolution within 1.x — tests/test_ui.py
+# resolves that path from __file__ so it holds either way.)
+streamlit>=1.40.0,<2.0
 
 # --- dev / test ---
 pytest>=8.3.0
